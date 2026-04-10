@@ -35,6 +35,7 @@ export interface GameConfig {
     canvasWidth: number;
     canvasHeight: number;
     backgroundColor: string;
+    fpsLimit?: number;
     player1Color?: string;
     player2Color?: string;
     player1Model?: CubeModelType;

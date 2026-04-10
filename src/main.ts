@@ -25,7 +25,7 @@ import {
     DEFAULT_CANVAS_HEIGHT,
     DEFAULT_CANVAS_WIDTH,
 } from './constants/gameplay';
-import { InputHandler, PLAYER_1_KEYS, type InputState } from './systems/InputHandler';
+import { InputHandler, type InputState, type KeyBindings } from './systems/InputHandler';
 
 /**
  * Neon Rain - Main Entry Point
@@ -42,6 +42,53 @@ function isValidModelId(modelId: string): modelId is CubeModelType {
 
 function isValidHatId(hatId: string): hatId is CubeHatType {
     return CUBE_HATS.some(hat => hat.id === hatId);
+}
+
+const FPS_LIMIT_OPTIONS = [0, 30, 60, 90, 120, 144] as const;
+type FpsLimitOption = typeof FPS_LIMIT_OPTIONS[number];
+const FPS_LIMIT_STORAGE_KEY = 'neon-rain.fps-limit';
+
+const MULTIPLAYER_SHARED_KEYS: KeyBindings = {
+    left: ['KeyA'],
+    right: ['KeyD'],
+    up: ['KeyW'],
+    down: ['KeyS'],
+    dash: ['ShiftLeft'],
+    deployBomb: ['KeyQ'],
+};
+
+function isValidFpsLimit(value: number): value is FpsLimitOption {
+    return (FPS_LIMIT_OPTIONS as readonly number[]).includes(value);
+}
+
+function loadPersistedFpsLimit(fallback: FpsLimitOption = 0): FpsLimitOption {
+    try {
+        const stored = window.localStorage.getItem(FPS_LIMIT_STORAGE_KEY);
+        if (!stored) {
+            return fallback;
+        }
+
+        const parsed = Number(stored);
+        if (Number.isFinite(parsed) && isValidFpsLimit(parsed)) {
+            return parsed;
+        }
+    } catch {
+        // Ignore storage failures and keep defaults.
+    }
+
+    return fallback;
+}
+
+function persistFpsLimitSelection(value: FpsLimitOption): void {
+    try {
+        window.localStorage.setItem(FPS_LIMIT_STORAGE_KEY, String(value));
+    } catch {
+        // Ignore storage failures and continue gameplay.
+    }
+}
+
+function getFpsLimitLabel(limit: FpsLimitOption): string {
+    return limit === 0 ? 'Display Refresh (Uncapped)' : `${limit} FPS`;
 }
 
 function loadPersistedColor(player: PlayerSlot, fallback: string): string {
@@ -113,6 +160,7 @@ const selectedHatByPlayer: Record<PlayerSlot, CubeHatType> = {
     p1: loadPersistedHat('p1', DEFAULT_PLAYER_CUSTOMIZATION.p1.hat),
     p2: loadPersistedHat('p2', DEFAULT_PLAYER_CUSTOMIZATION.p2.hat),
 };
+let selectedFpsLimit: FpsLimitOption = loadPersistedFpsLimit();
 
 let game: Game | null = null;
 const networkClient = new NetworkClient();
@@ -131,7 +179,7 @@ const NEUTRAL_INPUT_STATE: InputState = {
     dash: false,
     deployBomb: false,
 };
-const multiplayerLocalInputHandler = new InputHandler(PLAYER_1_KEYS, 'Net Local');
+const multiplayerLocalInputHandler = new InputHandler(MULTIPLAYER_SHARED_KEYS, 'Net Local');
 const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
 let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
@@ -140,6 +188,7 @@ let multiplayerInputSyncIntervalId: number | null = null;
 let multiplayerSnapshotTick = 0;
 let multiplayerSnapshotSyncIntervalId: number | null = null;
 let multiplayerIsHost = false;
+let multiplayerMatchStartPending = false;
 
 const appElement = document.getElementById('app');
 const canvasElement = document.getElementById('gameCanvas');
@@ -216,6 +265,7 @@ function stopMultiplayerInputSync(): void {
     multiplayerInputSequence = 0;
     multiplayerSnapshotTick = 0;
     multiplayerIsHost = false;
+    multiplayerMatchStartPending = false;
 
     if (game) {
         game.setNetworkSyncContext({ role: 'local' });
@@ -288,27 +338,27 @@ function refreshHostRoleForActiveMatch(): void {
     startMatchTransportLoops();
 }
 
-function startMultiplayerMatchFromRoom(): void {
+function startMultiplayerMatchFromRoom(): boolean {
     if (!multiplayerRoom || !multiplayerSelfPlayerId) {
         multiplayerStatus = 'Cannot start multiplayer match without room context.';
         rerenderMultiplayerIfVisible();
-        return;
+        return false;
     }
 
     const activePlayers = multiplayerRoom.players;
     if (activePlayers.length < 2) {
         multiplayerStatus = 'Need at least 2 players in room to sync match inputs.';
         rerenderMultiplayerIfVisible();
-        return;
+        return false;
     }
 
     const playerOrder = activePlayers.map(player => player.playerId);
     const localPlayerIndex = playerOrder.findIndex(playerId => playerId === multiplayerSelfPlayerId);
 
     if (localPlayerIndex < 0) {
-        multiplayerStatus = 'Current player is not part of the active synced slots.';
+        multiplayerStatus = 'Syncing room roster before match start...';
         rerenderMultiplayerIfVisible();
-        return;
+        return false;
     }
 
     stopMultiplayerInputSync();
@@ -324,17 +374,17 @@ function startMultiplayerMatchFromRoom(): void {
     }
 
     startGame({
-        multiplayerSlots: activePlayers.map((player, index) => ({
+        multiplayerSlots: activePlayers.map((player) => ({
             color: player.customization.color,
             model: player.customization.model,
             hat: player.customization.hat,
-            label: `P${index + 1}`,
+            label: player.displayName,
         })),
     });
     if (!game) {
         multiplayerStatus = 'Failed to initialize game instance for multiplayer input sync.';
         rerenderMultiplayerIfVisible();
-        return;
+        return false;
     }
 
     game.setNetworkSyncContext({
@@ -361,6 +411,9 @@ function startMultiplayerMatchFromRoom(): void {
     multiplayerStatus = multiplayerIsHost
         ? 'You are host: authoritative snapshots broadcasting.'
         : `Client sync active in slot ${multiplayerLocalPlayerIndex + 1}.`;
+
+    multiplayerMatchStartPending = false;
+    return true;
 }
 
 function rerenderMultiplayerIfVisible(): void {
@@ -383,11 +436,16 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             multiplayerSelfPlayerId = message.playerId;
             multiplayerRoom = message.room;
             stopMultiplayerInputSync();
+            multiplayerMatchStartPending = false;
             multiplayerStatus = `Joined room ${message.room.code}.`;
             break;
         case 'room_updated':
             multiplayerRoom = message.room;
             refreshHostRoleForActiveMatch();
+
+            if (multiplayerMatchStartPending && message.room.started) {
+                startMultiplayerMatchFromRoom();
+            }
             break;
         case 'player_left':
             multiplayerRemoteInputByPlayerId.delete(message.playerId);
@@ -405,6 +463,7 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             break;
         case 'match_started':
             multiplayerStatus = `Match started for room ${message.roomCode}. Input sync engaged.`;
+            multiplayerMatchStartPending = true;
             startMultiplayerMatchFromRoom();
             break;
         case 'error':
@@ -497,7 +556,7 @@ function showMultiplayerMenu(): void {
     menuOverlay.innerHTML = `
         <div class="menu-panel multiplayer-panel">
             <h2 class="menu-title">Online Lobby</h2>
-            <p class="menu-subtitle">Client-hosted multiplayer foundation (WebSocket)</p>
+            <p class="menu-subtitle">Client-hosted multiplayer (WASD + Left Shift + Q)</p>
 
             <div class="multiplayer-status ${multiplayerConnected ? 'connected' : 'disconnected'}">${multiplayerStatus}</div>
 
@@ -640,6 +699,11 @@ function showStartMenu(): void {
         app.appendChild(menuOverlay);
     }
 
+    const fpsOptionsMarkup = FPS_LIMIT_OPTIONS.map(limit => {
+        const selected = selectedFpsLimit === limit ? 'selected' : '';
+        return `<option value="${limit}" ${selected}>${getFpsLimitLabel(limit)}</option>`;
+    }).join('');
+
     menuOverlay.innerHTML = `
         <div class="menu-panel">
             <h1 class="menu-title">Neon Rain</h1>
@@ -662,6 +726,11 @@ function showStartMenu(): void {
                 </div>
             </div>
 
+            <div class="menu-setting-row">
+                <label for="fpsLimitSelect">FPS Limit</label>
+                <select id="fpsLimitSelect">${fpsOptionsMarkup}</select>
+            </div>
+
             <div class="menu-actions">
                 <button id="startGameBtn" class="menu-btn primary">Start Game</button>
                 <button id="openMultiplayerBtn" class="menu-btn primary">Multiplayer Lobby</button>
@@ -673,6 +742,17 @@ function showStartMenu(): void {
     const startGameBtn = document.getElementById('startGameBtn');
     const openMultiplayerBtn = document.getElementById('openMultiplayerBtn');
     const openCustomizeBtn = document.getElementById('openCustomizeBtn');
+    const fpsLimitSelect = document.getElementById('fpsLimitSelect') as HTMLSelectElement | null;
+
+    fpsLimitSelect?.addEventListener('change', () => {
+        const parsed = Number(fpsLimitSelect.value);
+        if (!Number.isFinite(parsed) || !isValidFpsLimit(parsed)) {
+            return;
+        }
+
+        selectedFpsLimit = parsed;
+        persistFpsLimitSelection(selectedFpsLimit);
+    });
 
     startGameBtn?.addEventListener('click', () => startGame());
     openMultiplayerBtn?.addEventListener('click', () => {
@@ -858,6 +938,7 @@ function startGame(options?: {
         canvasWidth: DEFAULT_CANVAS_WIDTH,
         canvasHeight: DEFAULT_CANVAS_HEIGHT,
         backgroundColor: DEFAULT_BACKGROUND_COLOR,
+        fpsLimit: selectedFpsLimit === 0 ? undefined : selectedFpsLimit,
         player1Color: getSelectedColor('p1').value,
         player2Color: getSelectedColor('p2').value,
         player1Model: selectedModelByPlayer.p1,

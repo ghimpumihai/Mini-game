@@ -353,14 +353,16 @@ function startMatch(playerId: string): void {
     room.started = true;
     room.updatedAtMs = Date.now();
 
+    // Ensure clients receive the final room roster (including all active players)
+    // before handling match start.
+    sendRoomUpdate(room.code);
+
     broadcastToRoom(room.code, {
         type: 'match_started',
         roomCode: room.code,
         hostPlayerId: room.hostPlayerId,
         startedAtMs: Date.now(),
     });
-
-    sendRoomUpdate(room.code);
 }
 
 function forwardInputFrame(playerId: string, payload: Extract<ClientToServerMessage, { type: 'input_frame' }>): void {

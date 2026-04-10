@@ -78,6 +78,8 @@ export class Game {
     private readonly frameScheduler = globalThis as {
         requestAnimationFrame?: (callback: FrameRequestCallback) => number;
     };
+    private readonly fpsLimit: number;
+    private readonly minFrameIntervalSeconds: number;
 
     private static readonly MULTIPLAYER_FALLBACK_COLORS = ['#00ffff', '#ff00ff', '#39ff14', '#ff9100'];
 
@@ -96,11 +98,20 @@ export class Game {
         }
         this.ctx = ctx;
 
+        const rawFpsLimit = config?.fpsLimit;
+        const normalizedFpsLimit =
+            typeof rawFpsLimit === 'number' && Number.isFinite(rawFpsLimit) && rawFpsLimit > 0
+                ? Math.floor(rawFpsLimit)
+                : 0;
+        this.fpsLimit = normalizedFpsLimit;
+        this.minFrameIntervalSeconds = normalizedFpsLimit > 0 ? 1 / normalizedFpsLimit : 0;
+
         // Set default configuration
         this.config = {
             canvasWidth: config?.canvasWidth ?? DEFAULT_CANVAS_WIDTH,
             canvasHeight: config?.canvasHeight ?? DEFAULT_CANVAS_HEIGHT,
             backgroundColor: config?.backgroundColor ?? DEFAULT_BACKGROUND_COLOR,
+            fpsLimit: normalizedFpsLimit > 0 ? normalizedFpsLimit : undefined,
             player1Color: config?.player1Color,
             player2Color: config?.player2Color,
             player1Model: config?.player1Model,
@@ -267,7 +278,11 @@ export class Game {
 
         this.isRunning = true;
         this.lastTime = performance.now();
-        console.log('▶️ Game loop started');
+        console.log(
+            this.fpsLimit > 0
+                ? `▶️ Game loop started (capped at ${this.fpsLimit} FPS)`
+                : '▶️ Game loop started'
+        );
 
         this.scheduleNextFrame();
     }
@@ -309,7 +324,14 @@ export class Game {
     private loop(currentTime: number): void {
         if (!this.isRunning) return;
 
-        const deltaTime = (currentTime - this.lastTime) / 1000;
+        const elapsedSeconds = (currentTime - this.lastTime) / 1000;
+
+        if (this.minFrameIntervalSeconds > 0 && elapsedSeconds < this.minFrameIntervalSeconds) {
+            this.scheduleNextFrame();
+            return;
+        }
+
+        const deltaTime = elapsedSeconds;
         this.lastTime = currentTime;
 
         // FPS counter
