@@ -9,6 +9,7 @@ import { PowerupManager } from '../systems/PowerupManager';
 import { PowerupType } from '../entities/Powerup';
 import { Bomb } from '../entities/Bomb';
 import { Projectile } from '../entities/Projectile';
+import { ObjectPool } from '../utils/ObjectPool';
 
 /**
  * The main Game class - the brain of Neon Rain
@@ -29,14 +30,14 @@ export class Game {
     private winner: Player | null = null;
 
     // Game objects
-    private inputs: InputHandler[] = [];
+    // Note: inputs field is defined but not directly used - players have their own InputHandler references
     private players: Player[] = [];
     private enemyManager: EnemyManager;
     private particles: ParticleSystem;
     private powerupManager: PowerupManager;
 
-    // Projectiles and Bombs
-    private projectiles: Projectile[] = [];
+    // Projectiles and Bombs with pooling
+    private projectilePool: ObjectPool<Projectile>;
     private bombs: Bomb[] = [];
 
     // Player trail tracking
@@ -77,7 +78,6 @@ export class Game {
         // Initialize input handlers for both players
         const input1 = new InputHandler(PLAYER_1_KEYS, 'P1');
         const input2 = new InputHandler(PLAYER_2_KEYS, 'P2');
-        this.inputs = [input1, input2];
 
         // Initialize players
         const player1 = new Player(
@@ -116,6 +116,13 @@ export class Game {
 
         // Initialize particle system
         this.particles = new ParticleSystem(800);
+
+        // Initialize projectile pool
+        this.projectilePool = new ObjectPool<Projectile>(
+            () => new Projectile(0, 0, this.players[0], this.players[1]),
+            20, // Pre-allocate 20 projectiles
+            (proj) => proj.reset()
+        );
 
         // Listen for restart input
         window.addEventListener('keydown', (e) => this.handleGlobalInput(e));
@@ -176,7 +183,7 @@ export class Game {
         this.enemyManager.reset();
         this.powerupManager.reset();
         this.particles.clear();
-        this.projectiles = [];
+        this.projectilePool.clear();
         this.bombs = [];
 
         this.gameOverScreen.reset();
@@ -233,9 +240,15 @@ export class Game {
                 this.enemyManager.update(deltaTime);
                 this.powerupManager.update(deltaTime);
 
-                // Update Projectiles
-                this.projectiles.forEach(p => p.update(deltaTime));
-                this.projectiles = this.projectiles.filter(p => !p.getIsExpired());
+                // Update Projectiles using pool
+                const projectiles = this.projectilePool.getActiveObjects();
+                projectiles.forEach(p => p.update(deltaTime));
+                // Release expired projectiles
+                projectiles.forEach(p => {
+                    if (p.getIsExpired()) {
+                        this.projectilePool.release(p);
+                    }
+                });
 
                 // Update Bombs
                 this.bombs.forEach(b => b.update(deltaTime));
@@ -375,13 +388,13 @@ export class Game {
                     for (let i = 0; i < 3; i++) {
                         setTimeout(() => {
                             if (player.getIsAlive()) {
-                                const proj = new Projectile(
+                                const proj = this.projectilePool.get();
+                                proj.initialize(
                                     player.position.x + player.width / 2,
                                     player.position.y + player.height / 2,
                                     player,
                                     opponent
                                 );
-                                this.projectiles.push(proj);
                             }
                         }, i * 400); // 400ms delay between shots
                     }
@@ -433,7 +446,8 @@ export class Game {
      */
     private checkPvPCollisions(): void {
         // Projectiles
-        this.projectiles.forEach(proj => {
+        const projectiles = this.projectilePool.getActiveObjects();
+        projectiles.forEach(proj => {
             if (proj.getIsExpired()) return;
 
             this.players.forEach(player => {
@@ -518,7 +532,7 @@ export class Game {
         this.powerupManager.draw(this.ctx);
         this.enemyManager.draw(this.ctx); // Rain is foreground-ish
         this.players.forEach(p => p.draw(this.ctx));
-        this.projectiles.forEach(p => p.draw(this.ctx));
+        this.projectilePool.getActiveObjects().forEach(p => p.draw(this.ctx));
 
         this.drawHUD();
 

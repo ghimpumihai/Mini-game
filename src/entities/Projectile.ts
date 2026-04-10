@@ -1,5 +1,6 @@
 import { Entity } from './Entity';
 import { Player } from './Player';
+import { CircularBuffer } from '../utils/CircularBuffer';
 
 export class Projectile extends Entity {
     private target: Player;
@@ -9,12 +10,50 @@ export class Projectile extends Entity {
     private lifetime: number = 3; // seconds
     private age: number = 0;
     private isExpired: boolean = false;
-    private trailPositions: { x: number; y: number }[] = [];
+    private trailBuffer: CircularBuffer<{ x: number; y: number }>;
+
+    /**
+     * Create a projectile (factory method for pooling)
+     */
+    public static create(shooter: Player, target: Player): Projectile {
+        const proj = new Projectile(
+            shooter.position.x + shooter.width / 2,
+            shooter.position.y + shooter.height / 2,
+            shooter,
+            target
+        );
+        return proj;
+    }
+
+    /**
+     * Initialize projectile with new values (for pooling)
+     */
+    public initialize(x: number, y: number, shooter: Player, target: Player): void {
+        this.position.x = x;
+        this.position.y = y;
+        this.color = shooter.getColor();
+        this.shooter = shooter;
+        this.target = target;
+        this.age = 0;
+        this.isExpired = false;
+        this.trailBuffer.clear();
+        this.updateDirection();
+    }
+
+    /**
+     * Reset projectile to initial state (for pooling)
+     */
+    public reset(): void {
+        this.isExpired = true;
+        this.age = 0;
+        this.trailBuffer.clear();
+    }
 
     constructor(x: number, y: number, shooter: Player, target: Player) {
         super(x, y, 8, 8, shooter.getColor());
         this.shooter = shooter;
         this.target = target;
+        this.trailBuffer = new CircularBuffer<{ x: number; y: number }>(10);
         this.updateDirection();
     }
 
@@ -44,10 +83,7 @@ export class Projectile extends Entity {
             this.updateDirection();
         }
 
-        this.trailPositions.push({ x: this.position.x, y: this.position.y });
-        if (this.trailPositions.length > 10) {
-            this.trailPositions.shift();
-        }
+        this.trailBuffer.push({ x: this.position.x, y: this.position.y });
 
         super.update(deltaTime);
     }
@@ -58,10 +94,14 @@ export class Projectile extends Entity {
         ctx.save();
 
         // Trail
-        for (let i = 0; i < this.trailPositions.length; i++) {
-            const pos = this.trailPositions[i];
-            const alpha = (i / this.trailPositions.length) * 0.5;
-            const size = (i / this.trailPositions.length) * this.width;
+        const trail = this.trailBuffer.toReversedArray();
+        for (let i = 0; i < trail.length; i++) {
+            const pos = trail[i];
+            if (!pos) {
+                continue;
+            }
+            const alpha = (i / trail.length) * 0.5;
+            const size = (i / trail.length) * this.width;
 
             ctx.globalAlpha = alpha;
             ctx.fillStyle = this.color;

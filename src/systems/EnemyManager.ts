@@ -1,4 +1,5 @@
 import { Enemy, EnemyConfig } from '../entities/Enemy';
+import { ObjectPool } from '../utils/ObjectPool';
 
 /**
  * EnemyManager configuration
@@ -25,10 +26,10 @@ const DEFAULT_MANAGER_CONFIG: EnemyManagerConfig = {
 
 /**
  * EnemyManager class
- * Handles spawning, updating, and removing enemies
+ * Handles spawning, updating, and removing enemies with object pooling
  */
 export class EnemyManager {
-    private enemies: Enemy[] = [];
+    private enemyPool: ObjectPool<Enemy>;
     private config: EnemyManagerConfig;
     private spawnTimer: number = 0;
     private currentSpawnInterval: number;
@@ -48,6 +49,13 @@ export class EnemyManager {
         this.config = { ...DEFAULT_MANAGER_CONFIG, ...config };
         this.currentSpawnInterval = this.config.baseSpawnInterval;
         this.currentEnemySpeed = this.config.baseEnemySpeed;
+
+        // Initialize enemy pool with 50 pre-allocated enemies
+        this.enemyPool = new ObjectPool<Enemy>(
+            () => new Enemy(0, this.config.canvasHeight, 200),
+            50, // Pre-allocate 50 enemies
+            (enemy) => enemy.reset()
+        );
 
         console.log('👾 EnemyManager initialized');
     }
@@ -73,7 +81,8 @@ export class EnemyManager {
         }
 
         // Update all enemies
-        for (const enemy of this.enemies) {
+        const enemies = this.enemyPool.getActiveObjects();
+        for (const enemy of enemies) {
             enemy.update(deltaTime);
         }
 
@@ -85,7 +94,8 @@ export class EnemyManager {
      * Draw all enemies
      */
     public draw(ctx: CanvasRenderingContext2D): void {
-        for (const enemy of this.enemies) {
+        const enemies = this.enemyPool.getActiveObjects();
+        for (const enemy of enemies) {
             enemy.draw(ctx);
         }
     }
@@ -132,8 +142,8 @@ export class EnemyManager {
             width: width,
         };
 
-        const enemy = new Enemy(x, this.config.canvasHeight, speed, enemyConfig);
-        this.enemies.push(enemy);
+        const enemy = this.enemyPool.get();
+        enemy.initialize(x, this.config.canvasHeight, speed, enemyConfig);
     }
 
     /**
@@ -162,8 +172,8 @@ export class EnemyManager {
             height: 12, // Slightly thinner
         };
 
-        const enemy = new Enemy(x, this.config.canvasHeight, speed, enemyConfig);
-        this.enemies.push(enemy);
+        const enemy = this.enemyPool.get();
+        enemy.initialize(x, this.config.canvasHeight, speed, enemyConfig);
     }
 
     /**
@@ -202,12 +212,11 @@ export class EnemyManager {
      * Remove enemies that have gone off-screen
      */
     private removeOffScreenEnemies(): void {
-        const beforeCount = this.enemies.length;
-        this.enemies = this.enemies.filter((enemy) => !enemy.getIsOffScreen());
-        const removed = beforeCount - this.enemies.length;
+        const enemies = this.enemyPool.getActiveObjects();
+        const offscreenEnemies = enemies.filter(enemy => enemy.getIsOffScreen());
 
-        if (removed > 0) {
-            // Silently remove - no console spam
+        for (const enemy of offscreenEnemies) {
+            this.enemyPool.release(enemy);
         }
     }
 
@@ -240,7 +249,7 @@ export class EnemyManager {
      * Get all active enemies (for collision detection)
      */
     public getEnemies(): Enemy[] {
-        return this.enemies;
+        return this.enemyPool.getActiveObjects();
     }
 
     /**
@@ -254,14 +263,14 @@ export class EnemyManager {
      * Get the current enemy count
      */
     public getEnemyCount(): number {
-        return this.enemies.length;
+        return this.enemyPool.getActiveCount();
     }
 
     /**
      * Reset the manager (for game restart)
      */
     public reset(): void {
-        this.enemies = [];
+        this.enemyPool.clear();
         this.spawnTimer = 0;
         this.difficultyTimer = 0;
         this.difficultyLevel = 1;
@@ -274,6 +283,6 @@ export class EnemyManager {
      * Clear all enemies (without resetting difficulty)
      */
     public clearEnemies(): void {
-        this.enemies = [];
+        this.enemyPool.clear();
     }
 }

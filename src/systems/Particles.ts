@@ -1,4 +1,6 @@
 import { Vector2 } from '../core/interfaces';
+import { ObjectPool } from '../utils/ObjectPool';
+import { SinTable } from '../utils/SinTable';
 
 /**
  * Single particle configuration
@@ -36,6 +38,32 @@ export class Particle {
         this.lifetime = config.lifetime;
         this.maxLifetime = config.lifetime;
         this.fadeRate = config.fadeRate;
+    }
+
+    /**
+     * Initialize particle with new configuration (for pooling)
+     */
+    public initialize(config: ParticleConfig): void {
+        this.position.x = config.x;
+        this.position.y = config.y;
+        this.velocity.x = config.velocityX;
+        this.velocity.y = config.velocityY;
+        this.size = config.size;
+        this.color = config.color;
+        this.lifetime = config.lifetime;
+        this.maxLifetime = config.lifetime;
+        this.fadeRate = config.fadeRate;
+        this.alpha = 1;
+        this.isDead = false;
+    }
+
+    /**
+     * Reset particle to initial state (for pooling)
+     */
+    public reset(): void {
+        this.isDead = true;
+        this.alpha = 0;
+        this.lifetime = 0;
     }
 
     /**
@@ -89,25 +117,47 @@ export class Particle {
 
 /**
  * ParticleSystem class
- * Manages all particles in the game
+ * Manages all particles in the game using object pooling
  */
 export class ParticleSystem {
-    private particles: Particle[] = [];
+    private particlePool: ObjectPool<Particle>;
     private maxParticles: number = 500;
 
     constructor(maxParticles: number = 500) {
         this.maxParticles = maxParticles;
+        this.particlePool = new ObjectPool<Particle>(
+            () => new Particle({
+                x: 0,
+                y: 0,
+                velocityX: 0,
+                velocityY: 0,
+                size: 5,
+                color: '#ffffff',
+                lifetime: 0.5,
+                fadeRate: 1
+            }),
+            maxParticles,
+            (particle) => particle.reset()
+        );
     }
 
     /**
      * Spawn a single particle
      */
     public spawn(config: ParticleConfig): void {
-        if (this.particles.length >= this.maxParticles) {
-            // Remove oldest particle if at max
-            this.particles.shift();
+        // Check if we've reached max particles
+        if (this.particlePool.getActiveCount() >= this.maxParticles) {
+            // Release oldest particles to make room
+            const active = this.particlePool.getActiveObjects();
+            const toRelease = Math.ceil(active.length * 0.1); // Release 10% oldest
+            for (let i = 0; i < toRelease && active.length > 0; i++) {
+                this.particlePool.release(active[i]);
+            }
         }
-        this.particles.push(new Particle(config));
+
+        // Get particle from pool and initialize
+        const particle = this.particlePool.get();
+        particle.initialize(config);
     }
 
     /**
@@ -152,6 +202,7 @@ export class ParticleSystem {
         colors: string[],
         count: number = 30
     ): void {
+        const sinTable = SinTable.getInstance();
         for (let i = 0; i < count; i++) {
             const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
             const speed = 100 + Math.random() * 200;
@@ -160,8 +211,8 @@ export class ParticleSystem {
             this.spawn({
                 x: x,
                 y: y,
-                velocityX: Math.cos(angle) * speed,
-                velocityY: Math.sin(angle) * speed,
+                velocityX: sinTable.getCosRad(angle) * speed,
+                velocityY: sinTable.getSinRad(angle) * speed,
                 size: 5 + Math.random() * 10,
                 color: color,
                 lifetime: 0.5 + Math.random() * 0.5,
@@ -179,6 +230,7 @@ export class ParticleSystem {
         color: string,
         count: number = 5
     ): void {
+        const sinTable = SinTable.getInstance();
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = 50 + Math.random() * 100;
@@ -186,8 +238,8 @@ export class ParticleSystem {
             this.spawn({
                 x: x + (Math.random() - 0.5) * 20,
                 y: y + (Math.random() - 0.5) * 20,
-                velocityX: Math.cos(angle) * speed,
-                velocityY: Math.sin(angle) * speed,
+                velocityX: sinTable.getCosRad(angle) * speed,
+                velocityY: sinTable.getSinRad(angle) * speed,
                 size: 2 + Math.random() * 4,
                 color: color,
                 lifetime: 0.2 + Math.random() * 0.2,
@@ -201,19 +253,24 @@ export class ParticleSystem {
      */
     public update(deltaTime: number): void {
         // Update all particles
-        for (const particle of this.particles) {
+        const particles = this.particlePool.getActiveObjects();
+        for (const particle of particles) {
             particle.update(deltaTime);
         }
 
         // Remove dead particles
-        this.particles = this.particles.filter((p) => !p.isDead);
+        const deadParticles = particles.filter(p => p.isDead);
+        for (const particle of deadParticles) {
+            this.particlePool.release(particle);
+        }
     }
 
     /**
      * Draw all particles
      */
     public draw(ctx: CanvasRenderingContext2D): void {
-        for (const particle of this.particles) {
+        const particles = this.particlePool.getActiveObjects();
+        for (const particle of particles) {
             particle.draw(ctx);
         }
     }
@@ -222,13 +279,13 @@ export class ParticleSystem {
      * Get the current particle count
      */
     public getParticleCount(): number {
-        return this.particles.length;
+        return this.particlePool.getActiveCount();
     }
 
     /**
      * Clear all particles
      */
     public clear(): void {
-        this.particles = [];
+        this.particlePool.clear();
     }
 }

@@ -29,6 +29,36 @@ export class Enemy extends Entity {
     private isOffScreen: boolean = false;
     private glowIntensity: number;
 
+    /**
+     * Initialize enemy with new values (for pooling)
+     */
+    public initialize(x: number, canvasHeight: number, speed: number, config?: Partial<EnemyConfig>): void {
+        const finalConfig = { ...DEFAULT_ENEMY_CONFIG, ...config };
+
+        // Start above the screen
+        const startY = -finalConfig.height;
+
+        this.position.x = x;
+        this.position.y = startY;
+        this.width = finalConfig.width;
+        this.height = finalConfig.height;
+        this.color = finalConfig.color;
+
+        this.config = finalConfig;
+        this.canvasHeight = canvasHeight;
+        this.velocity.x = 0;
+        this.velocity.y = speed;
+        this.glowIntensity = 0.5 + Math.random() * 0.5;
+        this.isOffScreen = false;
+    }
+
+    /**
+     * Reset enemy to initial state (for pooling)
+     */
+    public reset(): void {
+        this.isOffScreen = true;
+    }
+
     constructor(
         x: number,
         canvasHeight: number,

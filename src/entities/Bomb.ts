@@ -1,5 +1,6 @@
 import { Entity } from './Entity';
 import { Player } from './Player';
+import { SinTable } from '../utils/SinTable';
 
 /**
  * Bomb class - placed by players, explodes after delay
@@ -37,7 +38,11 @@ export class Bomb extends Entity {
         }
 
         this.timer += deltaTime;
+        const sinTable = SinTable.getInstance();
         this.pulseTimer += deltaTime * (2 + this.timer * 3); // Pulse faster as timer approaches
+
+        // Store current pulse value for rendering
+        (this as any).pulseValue = sinTable.getSinRad(this.pulseTimer);
 
         if (this.timer >= this.fuseTime) {
             this.explode();
@@ -127,7 +132,7 @@ export class Bomb extends Entity {
 
         } else if (!this.isExploded) {
             // Draw bomb
-            const pulse = Math.sin(this.pulseTimer) * 0.3 + 0.7;
+            const pulse = (this as any).pulseValue * 0.3 + 0.7;
             const timeLeft = this.fuseTime - this.timer;
             const urgency = 1 - (timeLeft / this.fuseTime);
 
@@ -145,7 +150,8 @@ export class Bomb extends Entity {
             ctx.fillStyle = '#ffff00';
             ctx.shadowColor = '#ffff00';
             ctx.shadowBlur = 10;
-            const sparkSize = 4 + Math.sin(this.pulseTimer * 5) * 2;
+            const sinTable = SinTable.getInstance();
+            const sparkSize = 4 + sinTable.getSinRad(this.pulseTimer * 5) * 2;
             ctx.beginPath();
             ctx.arc(centerX, centerY - this.height / 2 - 5, sparkSize, 0, Math.PI * 2);
             ctx.fill();

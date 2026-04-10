@@ -1,4 +1,5 @@
 import { Entity } from './Entity';
+import { SinTable } from '../utils/SinTable';
 
 /**
  * Powerup types
@@ -63,7 +64,8 @@ export class Powerup extends Entity {
      */
     public update(deltaTime: number): void {
         this.pulseTimer += deltaTime * 3;
-        this.floatOffset = Math.sin(this.pulseTimer) * 5;
+        const sinTable = SinTable.getInstance();
+        this.floatOffset = sinTable.getSinRad(this.pulseTimer) * 5;
     }
 
     /**
