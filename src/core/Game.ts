@@ -1,6 +1,6 @@
 import { GameConfig } from './interfaces';
 import { GameState, GameOverScreen } from './GameState';
-import { InputHandler, PLAYER_1_KEYS, PLAYER_2_KEYS } from '../systems/InputHandler';
+import { InputHandler, PLAYER_1_KEYS, PLAYER_2_KEYS, type InputState } from '../systems/InputHandler';
 import { Player, PLAYER_1_CONFIG, PLAYER_2_CONFIG } from '../entities/Player';
 import { EnemyManager } from '../systems/EnemyManager';
 import { checkCollisionWithArray, checkAABBCollision, getCollisionOverlap } from '../systems/Collision';
@@ -10,6 +10,13 @@ import { PowerupType } from '../entities/Powerup';
 import { Bomb } from '../entities/Bomb';
 import { Projectile } from '../entities/Projectile';
 import { ObjectPool } from '../utils/ObjectPool';
+import type {
+    BombSnapshot,
+    GameSnapshot,
+    PlayerSnapshot,
+    ProjectileSnapshot,
+    SnapshotRoundState,
+} from '../multiplayer/protocol';
 import {
     DEFAULT_BACKGROUND_COLOR,
     DEFAULT_CANVAS_HEIGHT,
@@ -18,6 +25,9 @@ import {
     MAP_BORDER_COLOR,
     MAP_BORDER_THICKNESS,
 } from '../constants/gameplay';
+
+type PlayerInputResolver = (player: Player, index: number) => InputState | undefined;
+type NetworkRole = 'local' | 'host' | 'client';
 
 /**
  * The main Game class - the brain of Neon Rain
@@ -40,6 +50,10 @@ export class Game {
     // Game objects
     // Note: inputs field is defined but not directly used - players have their own InputHandler references
     private players: Player[] = [];
+    private playerInputResolver?: PlayerInputResolver;
+    private networkRole: NetworkRole = 'local';
+    private networkPlayerOrder: string[] = [];
+    private networkLocalPlayerId: string | null = null;
     private enemyManager: EnemyManager;
     private particles: ParticleSystem;
     private powerupManager: PowerupManager;
@@ -60,6 +74,10 @@ export class Game {
     // Arena visuals
     private readonly mapBorderThickness: number = MAP_BORDER_THICKNESS;
     private readonly mapBorderColor: string = MAP_BORDER_COLOR;
+
+    private readonly frameScheduler = globalThis as {
+        requestAnimationFrame?: (callback: FrameRequestCallback) => number;
+    };
 
     constructor(canvasId: string, config?: Partial<GameConfig>) {
         // Get the canvas element
@@ -98,7 +116,7 @@ export class Game {
         const input2 = new InputHandler(PLAYER_2_KEYS, 'P2');
 
         const player1Color = this.config.player1Color ?? PLAYER_1_CONFIG.color ?? '#00ffff';
-        const player2Color = this.config.player2Color ?? PLAYER_2_CONFIG.color ?? '#800000';
+        const player2Color = this.config.player2Color ?? PLAYER_2_CONFIG.color ?? '#ff00ff';
         const player1Model = this.config.player1Model ?? PLAYER_1_CONFIG.model ?? 'core';
         const player2Model = this.config.player2Model ?? PLAYER_2_CONFIG.model ?? 'core';
         const player1Hat = this.config.player1Hat ?? PLAYER_1_CONFIG.hat ?? 'none';
@@ -192,7 +210,7 @@ export class Game {
         this.lastTime = performance.now();
         console.log('▶️ Game loop started');
 
-        requestAnimationFrame((timestamp) => this.loop(timestamp));
+        this.scheduleNextFrame();
     }
 
     /**
@@ -247,7 +265,18 @@ export class Game {
         this.update(deltaTime);
         this.draw();
 
-        requestAnimationFrame((timestamp) => this.loop(timestamp));
+        this.scheduleNextFrame();
+    }
+
+    private scheduleNextFrame(): void {
+        const requestAnimationFrameFn = this.frameScheduler.requestAnimationFrame;
+
+        if (typeof requestAnimationFrameFn !== 'function') {
+            this.isRunning = false;
+            return;
+        }
+
+        requestAnimationFrameFn((timestamp) => this.loop(timestamp));
     }
 
     /**
@@ -258,13 +287,19 @@ export class Game {
             this.particles.update(deltaTime);
 
             if (this.gameState === GameState.PLAYING) {
+                if (this.networkRole === 'client') {
+                    this.updateClientReplica(deltaTime);
+                    return;
+                }
+
                 this.gameTime += deltaTime;
                 this.score = Math.floor(this.gameTime * 10);
 
                 // Update Players
-                this.players.forEach(player => {
+                this.players.forEach((player, index) => {
                     if (player.getIsAlive()) {
-                        player.update(deltaTime);
+                        const resolvedInput = this.playerInputResolver?.(player, index);
+                        player.update(deltaTime, resolvedInput);
 
                         const heldBombExpired = player.updateStoredBombTimers(deltaTime);
                         if (heldBombExpired) {
@@ -311,6 +346,34 @@ export class Game {
         } catch (e) {
             console.error("Game Loop Error:", e);
         }
+    }
+
+    private updateClientReplica(deltaTime: number): void {
+        this.gameTime += deltaTime;
+
+        const localPlayerIndex = this.getLocalPlayerIndex();
+        if (localPlayerIndex !== null) {
+            const localPlayer = this.players[localPlayerIndex];
+            if (localPlayer?.getIsAlive()) {
+                const resolvedInput = this.playerInputResolver?.(localPlayer, localPlayerIndex);
+                localPlayer.update(deltaTime, resolvedInput);
+            }
+        }
+
+        this.updatePlayerTrails(deltaTime);
+        this.enemyManager.update(deltaTime);
+        this.powerupManager.update(deltaTime);
+
+        const projectiles = this.projectilePool.getActiveObjects();
+        projectiles.forEach(p => p.update(deltaTime));
+        projectiles.forEach(p => {
+            if (p.getIsExpired()) {
+                this.projectilePool.release(p);
+            }
+        });
+
+        this.bombs.forEach(b => b.update(deltaTime));
+        this.bombs = this.bombs.filter(b => !b.isFinished());
     }
 
     /**
@@ -604,12 +667,29 @@ export class Game {
         }
     }
 
+    private hasRenderSupport(): boolean {
+        const context = this.ctx as Partial<CanvasRenderingContext2D>;
+
+        return (
+            typeof context.save === 'function' &&
+            typeof context.restore === 'function' &&
+            typeof context.beginPath === 'function' &&
+            typeof context.arc === 'function' &&
+            typeof context.strokeRect === 'function' &&
+            typeof context.fillText === 'function'
+        );
+    }
+
     /**
      * Draw everything
      */
     private draw(): void {
         this.ctx.fillStyle = this.config.backgroundColor;
         this.ctx.fillRect(0, 0, this.config.canvasWidth, this.config.canvasHeight);
+
+        if (!this.hasRenderSupport()) {
+            return;
+        }
 
         // Draw game elements in layer order
         this.particles.draw(this.ctx);
@@ -713,6 +793,228 @@ export class Game {
 
     public getCanvas(): HTMLCanvasElement { return this.canvas; }
     public getContext(): CanvasRenderingContext2D { return this.ctx; }
+    public getConfig(): GameConfig { return { ...this.config }; }
+    public getIsRunning(): boolean { return this.isRunning; }
     public getGameTime(): number { return this.gameTime; }
     public getGameState(): GameState { return this.gameState; }
+
+    public setNetworkSyncContext(options?: {
+        role?: NetworkRole;
+        playerOrder?: string[];
+        localPlayerId?: string | null;
+    }): void {
+        this.networkRole = options?.role ?? 'local';
+        this.networkPlayerOrder = [...(options?.playerOrder ?? [])];
+        this.networkLocalPlayerId = options?.localPlayerId ?? null;
+
+        const shouldRunSimulation = this.networkRole !== 'client';
+        this.enemyManager.setSimulationEnabled(shouldRunSimulation);
+        this.powerupManager.setSimulationEnabled(shouldRunSimulation);
+    }
+
+    public setPlayerInputResolver(resolver?: PlayerInputResolver): void {
+        this.playerInputResolver = resolver;
+    }
+
+    public getPlayerInputState(playerIndex: number): InputState | null {
+        const player = this.players[playerIndex];
+        if (!player) {
+            return null;
+        }
+
+        return player.getCurrentInputState();
+    }
+
+    public serializeSnapshot(playerOrder?: string[]): GameSnapshot {
+        const resolvedPlayerOrder = this.resolvePlayerOrder(playerOrder);
+
+        const players: PlayerSnapshot[] = this.players.map((player, index) => ({
+            playerId: resolvedPlayerOrder[index],
+            position: {
+                x: player.position.x,
+                y: player.position.y,
+            },
+            velocity: {
+                x: player.velocity.x,
+                y: player.velocity.y,
+            },
+            health: player.getHealth(),
+            isAlive: player.getIsAlive(),
+            isShielded: player.getIsShielded(),
+            storedBombs: player.getStoredBombs(),
+        }));
+
+        const projectiles: ProjectileSnapshot[] = this.projectilePool.getActiveObjects().map((projectile, index) => ({
+            projectileId: `projectile-${index}`,
+            position: {
+                x: projectile.position.x,
+                y: projectile.position.y,
+            },
+            velocity: {
+                x: projectile.velocity.x,
+                y: projectile.velocity.y,
+            },
+            shooterPlayerId: this.resolvePlayerIdByReference(projectile.getShooter(), resolvedPlayerOrder),
+            targetPlayerId: this.resolvePlayerIdByReference(projectile.getTarget(), resolvedPlayerOrder),
+            expiresInSeconds: projectile.getRemainingLifetimeSeconds(),
+        }));
+
+        const bombs: BombSnapshot[] = this.bombs.map((bomb, index) => ({
+            bombId: `bomb-${index}`,
+            ownerPlayerId: this.resolvePlayerIdByReference(bomb.getOwner(), resolvedPlayerOrder),
+            position: {
+                x: bomb.position.x,
+                y: bomb.position.y,
+            },
+            isExploding: bomb.getIsExploding(),
+            elapsedSeconds: bomb.getElapsedSeconds(),
+        }));
+
+        return {
+            timestampMs: Date.now(),
+            gameTimeSeconds: this.gameTime,
+            roundState: this.mapGameStateToRoundState(this.gameState),
+            score: this.score,
+            players,
+            enemies: this.enemyManager.serializeEnemies(),
+            projectiles,
+            bombs,
+            powerups: this.powerupManager.serializePowerups(),
+        };
+    }
+
+    public applySnapshot(
+        snapshot: GameSnapshot,
+        playerOrder?: string[],
+        localPlayerId?: string | null
+    ): void {
+        const resolvedPlayerOrder = this.resolvePlayerOrder(playerOrder);
+        const resolvedLocalPlayerId = localPlayerId ?? this.networkLocalPlayerId;
+
+        this.gameTime = snapshot.gameTimeSeconds;
+        this.score = snapshot.score;
+        this.gameState = this.mapRoundStateToGameState(snapshot.roundState);
+
+        this.players.forEach((player, index) => {
+            const mappedPlayerId = resolvedPlayerOrder[index];
+            const playerSnapshot = snapshot.players.find(snapshotPlayer => snapshotPlayer.playerId === mappedPlayerId)
+                ?? snapshot.players[index];
+
+            if (!playerSnapshot) {
+                return;
+            }
+
+            const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
+            player.applyNetworkSnapshot(playerSnapshot, {
+                interpolatePosition: this.networkRole === 'client' && isLocalPlayer,
+                smoothingAlpha: 0.35,
+            });
+        });
+
+        this.winner = this.players.find(player => player.getIsAlive()) ?? null;
+
+        this.enemyManager.applySnapshotEnemies(snapshot.enemies);
+        this.powerupManager.applySnapshotPowerups(snapshot.powerups);
+        this.applyBombSnapshots(snapshot.bombs, resolvedPlayerOrder);
+        this.applyProjectileSnapshots(snapshot.projectiles, resolvedPlayerOrder);
+    }
+
+    private applyBombSnapshots(bombSnapshots: BombSnapshot[], playerOrder: string[]): void {
+        this.bombs = bombSnapshots.map(bombSnapshot => {
+            const owner = this.resolvePlayerById(bombSnapshot.ownerPlayerId, playerOrder) ?? this.players[0];
+            const bomb = new Bomb(
+                bombSnapshot.position.x + 15,
+                bombSnapshot.position.y + 15,
+                owner
+            );
+            bomb.applySnapshotState(
+                bombSnapshot.position,
+                bombSnapshot.isExploding,
+                bombSnapshot.elapsedSeconds
+            );
+            return bomb;
+        });
+    }
+
+    private applyProjectileSnapshots(projectileSnapshots: ProjectileSnapshot[], playerOrder: string[]): void {
+        this.projectilePool.clear();
+
+        projectileSnapshots.forEach(projectileSnapshot => {
+            const shooter = this.resolvePlayerById(projectileSnapshot.shooterPlayerId, playerOrder) ?? this.players[0];
+            const target = this.resolvePlayerById(projectileSnapshot.targetPlayerId, playerOrder) ?? this.players[1] ?? this.players[0];
+
+            const projectile = this.projectilePool.get();
+            projectile.initialize(
+                projectileSnapshot.position.x,
+                projectileSnapshot.position.y,
+                shooter,
+                target
+            );
+            projectile.applySnapshotState(
+                projectileSnapshot.position,
+                projectileSnapshot.velocity,
+                projectileSnapshot.expiresInSeconds
+            );
+        });
+    }
+
+    private resolvePlayerOrder(playerOrder?: string[]): string[] {
+        const sourceOrder = playerOrder && playerOrder.length > 0
+            ? playerOrder
+            : this.networkPlayerOrder;
+
+        return this.players.map((_, index) => sourceOrder[index] ?? `slot-${index}`);
+    }
+
+    private resolvePlayerIdByReference(player: Player, playerOrder: string[]): string {
+        const index = this.players.indexOf(player);
+        if (index < 0) {
+            return 'unknown-player';
+        }
+
+        return playerOrder[index] ?? `slot-${index}`;
+    }
+
+    private resolvePlayerById(playerId: string, playerOrder: string[]): Player | null {
+        const index = playerOrder.findIndex(orderPlayerId => orderPlayerId === playerId);
+        if (index < 0) {
+            return null;
+        }
+
+        return this.players[index] ?? null;
+    }
+
+    private getLocalPlayerIndex(): number | null {
+        if (!this.networkLocalPlayerId) {
+            return null;
+        }
+
+        const index = this.networkPlayerOrder.findIndex(playerId => playerId === this.networkLocalPlayerId);
+        return index >= 0 ? index : null;
+    }
+
+    private mapGameStateToRoundState(gameState: GameState): SnapshotRoundState {
+        switch (gameState) {
+            case GameState.PLAYING:
+                return 'playing';
+            case GameState.GAME_OVER:
+                return 'game_over';
+            case GameState.MENU:
+            case GameState.PAUSED:
+            default:
+                return 'lobby';
+        }
+    }
+
+    private mapRoundStateToGameState(roundState: SnapshotRoundState): GameState {
+        switch (roundState) {
+            case 'playing':
+                return GameState.PLAYING;
+            case 'game_over':
+                return GameState.GAME_OVER;
+            case 'lobby':
+            default:
+                return GameState.MENU;
+        }
+    }
 }

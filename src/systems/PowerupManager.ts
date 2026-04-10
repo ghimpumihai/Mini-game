@@ -1,6 +1,7 @@
 import { Powerup, PowerupType } from '../entities/Powerup';
 import { Player } from '../entities/Player';
 import { checkAABBCollision } from './Collision';
+import type { PowerupSnapshot } from '../multiplayer/protocol';
 
 /**
  * PowerupManager - handles spawning and collecting powerups
@@ -19,6 +20,7 @@ export class PowerupManager {
 
     // Margin from edges
     private margin: number = 60;
+    private simulationEnabled: boolean = true;
 
     constructor(canvasWidth: number, canvasHeight: number) {
         this.canvasWidth = canvasWidth;
@@ -62,13 +64,15 @@ export class PowerupManager {
      * Update powerups
      */
     public update(deltaTime: number): void {
-        // Spawn timer
-        this.spawnTimer += deltaTime;
+        if (this.simulationEnabled) {
+            // Spawn timer
+            this.spawnTimer += deltaTime;
 
-        if (this.spawnTimer >= this.nextSpawnTime && this.powerups.length < this.maxPowerups) {
-            this.spawnPowerup();
-            this.spawnTimer = 0;
-            this.nextSpawnTime = this.getRandomSpawnTime();
+            if (this.spawnTimer >= this.nextSpawnTime && this.powerups.length < this.maxPowerups) {
+                this.spawnPowerup();
+                this.spawnTimer = 0;
+                this.nextSpawnTime = this.getRandomSpawnTime();
+            }
         }
 
         // Update all powerups
@@ -76,8 +80,55 @@ export class PowerupManager {
             powerup.update(deltaTime);
         }
 
-        // Remove collected powerups
-        this.powerups = this.powerups.filter(p => !p.getIsCollected());
+        if (this.simulationEnabled) {
+            // Remove collected powerups
+            this.powerups = this.powerups.filter(p => !p.getIsCollected());
+        }
+    }
+
+    public setSimulationEnabled(enabled: boolean): void {
+        this.simulationEnabled = enabled;
+    }
+
+    public serializePowerups(): PowerupSnapshot[] {
+        return this.powerups.map((powerup, index) => ({
+            powerupId: `powerup-${index}`,
+            position: {
+                x: powerup.position.x,
+                y: powerup.position.y,
+            },
+            type: powerup.getType(),
+            collected: powerup.getIsCollected(),
+        }));
+    }
+
+    public applySnapshotPowerups(snapshots: PowerupSnapshot[]): void {
+        this.powerups = snapshots
+            .map(snapshot => {
+                const powerupType = this.parsePowerupType(snapshot.type);
+                if (!powerupType) {
+                    return null;
+                }
+
+                const powerup = new Powerup(snapshot.position.x, snapshot.position.y, powerupType);
+                if (snapshot.collected) {
+                    powerup.collect();
+                }
+                return powerup;
+            })
+            .filter((powerup): powerup is Powerup => powerup !== null);
+    }
+
+    private parsePowerupType(type: string): PowerupType | null {
+        switch (type) {
+            case PowerupType.BOMB:
+            case PowerupType.SHIELD:
+            case PowerupType.GUN:
+            case PowerupType.HEAL:
+                return type;
+            default:
+                return null;
+        }
     }
 
     /**

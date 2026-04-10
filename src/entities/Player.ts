@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { InputHandler } from '../systems/InputHandler';
+import { InputHandler, type InputState } from '../systems/InputHandler';
 import type { CubeModelType, CubeHatType } from '../core/interfaces';
 
 /**
@@ -26,8 +26,8 @@ export const PLAYER_1_CONFIG: Partial<PlayerConfig> = {
 };
 
 export const PLAYER_2_CONFIG: Partial<PlayerConfig> = {
-    color: '#800000',
-    glowColor: '#800000',
+    color: '#ff00ff',
+    glowColor: '#ff00ff',
     playerNumber: 2,
     label: 'P2',
 };
@@ -49,7 +49,7 @@ const DEFAULT_PLAYER_CONFIG: PlayerConfig = {
  * Player class
  */
 export class Player extends Entity {
-    private input: InputHandler;
+    private input: InputHandler | null;
     private config: PlayerConfig;
     private canvasWidth: number;
     private canvasHeight: number;
@@ -79,10 +79,14 @@ export class Player extends Entity {
     private storedBombTimers: number[] = [];
     private static readonly STORED_BOMB_TIMEOUT_SECONDS: number = 8;
 
+    // Bomb deploy edge tracking (works for local and injected inputs)
+    private queuedBombDeploy: boolean = false;
+    private previousDeployPressed: boolean = false;
+
     constructor(
         canvasWidth: number,
         canvasHeight: number,
-        input: InputHandler,
+        input: InputHandler | null,
         config?: Partial<PlayerConfig>
     ) {
         const finalConfig = { ...DEFAULT_PLAYER_CONFIG, ...config };
@@ -107,7 +111,7 @@ export class Player extends Entity {
         this.health = this.maxHealth;
     }
 
-    public update(deltaTime: number): void {
+    public update(deltaTime: number, injectedInput?: InputState): void {
         if (!this.isAlive) return;
 
         if (this.isShielded) {
@@ -119,9 +123,14 @@ export class Player extends Entity {
         if (this.damageFlashTimer > 0) this.damageFlashTimer -= deltaTime;
 
         // Move
-        const horizontalAxis = this.input.getHorizontalAxis();
-        const verticalAxis = this.input.getVerticalAxis();
-        this.isDashing = this.input.isDashing();
+        const inputState = this.resolveInputState(injectedInput);
+        const horizontalAxis = this.calculateAxis(inputState.left, inputState.right);
+        const verticalAxis = this.calculateAxis(inputState.up, inputState.down);
+        if (injectedInput || !this.input) {
+            this.queueBombDeployFromState(inputState.deployBomb);
+        }
+
+        this.isDashing = inputState.dash;
         const speedMultiplier = this.isDashing ? this.config.dashMultiplier : 1;
 
         this.velocity.x = horizontalAxis * this.config.speed * speedMultiplier;
@@ -138,6 +147,40 @@ export class Player extends Entity {
         super.update(deltaTime);
         this.clampToBounds();
         this.updateGlow(deltaTime);
+    }
+
+    private resolveInputState(injectedInput?: InputState): InputState {
+        if (injectedInput) {
+            return injectedInput;
+        }
+
+        if (this.input) {
+            return this.input.getState();
+        }
+
+        return {
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            dash: false,
+            deployBomb: false,
+        };
+    }
+
+    private calculateAxis(negativePressed: boolean, positivePressed: boolean): number {
+        let axis = 0;
+        if (negativePressed) axis -= 1;
+        if (positivePressed) axis += 1;
+        return axis;
+    }
+
+    private queueBombDeployFromState(isDeployPressed: boolean): void {
+        if (isDeployPressed && !this.previousDeployPressed) {
+            this.queuedBombDeploy = true;
+        }
+
+        this.previousDeployPressed = isDeployPressed;
     }
 
     private clampToBounds(): void {
@@ -384,6 +427,7 @@ export class Player extends Entity {
     public getConfig(): PlayerConfig { return this.config; }
     public getIsDashing(): boolean { return this.isDashing; }
     public getIsAlive(): boolean { return this.isAlive; }
+    public getIsShielded(): boolean { return this.isShielded; }
     public getColor(): string { return this.config.color; }
     public getHealth(): number { return this.health; }
     public getMaxHealth(): number { return this.maxHealth; }
@@ -430,7 +474,65 @@ export class Player extends Entity {
     }
 
     public consumeBombDeployInput(): boolean {
-        return this.input.consumeBombDeployPressed();
+        const shouldDeploy = this.queuedBombDeploy;
+        this.queuedBombDeploy = false;
+
+        if (shouldDeploy) {
+            return true;
+        }
+
+        return this.input?.consumeBombDeployPressed() ?? false;
+    }
+
+    public getCurrentInputState(): InputState {
+        return this.input?.getState() ?? {
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            dash: false,
+            deployBomb: false,
+        };
+    }
+
+    public applyNetworkSnapshot(
+        snapshot: {
+            position: { x: number; y: number };
+            velocity: { x: number; y: number };
+            health: number;
+            isAlive: boolean;
+            isShielded: boolean;
+            storedBombs: number;
+        },
+        options?: { interpolatePosition?: boolean; smoothingAlpha?: number }
+    ): void {
+        const shouldInterpolate = options?.interpolatePosition ?? false;
+        const alpha = Math.max(0, Math.min(1, options?.smoothingAlpha ?? 0.35));
+
+        if (shouldInterpolate) {
+            this.position.x += (snapshot.position.x - this.position.x) * alpha;
+            this.position.y += (snapshot.position.y - this.position.y) * alpha;
+        } else {
+            this.position.x = snapshot.position.x;
+            this.position.y = snapshot.position.y;
+        }
+
+        this.velocity.x = snapshot.velocity.x;
+        this.velocity.y = snapshot.velocity.y;
+        this.health = Math.max(0, Math.min(this.maxHealth, snapshot.health));
+        this.isAlive = snapshot.isAlive;
+        this.isShielded = snapshot.isShielded;
+
+        if (!this.isShielded) {
+            this.shieldTimer = 0;
+        }
+
+        this.storedBombs = Math.max(0, Math.floor(snapshot.storedBombs));
+        this.storedBombTimers = Array.from({ length: this.storedBombs }, () => Player.STORED_BOMB_TIMEOUT_SECONDS);
+
+        if (!this.isAlive) {
+            this.clearStoredBombs();
+        }
     }
 
     public kill(): void { this.isAlive = false; }
@@ -443,6 +545,8 @@ export class Player extends Entity {
         this.isAlive = true;
         this.isShielded = false;
         this.shieldTimer = 0;
+        this.queuedBombDeploy = false;
+        this.previousDeployPressed = false;
         this.clearStoredBombs();
     }
 

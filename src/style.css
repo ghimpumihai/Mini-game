@@ -128,6 +128,12 @@ html, body {
   transform: translateY(-1px);
 }
 
+.menu-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .menu-btn.primary {
   color: #080a12;
   background: linear-gradient(120deg, #39ff14, #00b7ff);
@@ -242,6 +248,98 @@ html, body {
 
 .variant-name {
   font-size: 0.85rem;
+}
+
+.multiplayer-panel {
+  width: min(700px, 100%);
+}
+
+.multiplayer-status {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 0.9rem;
+}
+
+.multiplayer-status.connected {
+  border-color: rgba(57, 255, 20, 0.35);
+}
+
+.multiplayer-status.disconnected {
+  border-color: rgba(255, 110, 110, 0.4);
+}
+
+.multiplayer-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.multiplayer-form label {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(245, 247, 255, 0.76);
+}
+
+.multiplayer-form input {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(10, 12, 18, 0.88);
+  color: #f5f7ff;
+  font-size: 0.94rem;
+}
+
+.multiplayer-form input:focus {
+  outline: none;
+  border-color: rgba(57, 255, 20, 0.8);
+  box-shadow: 0 0 10px rgba(57, 255, 20, 0.22);
+}
+
+.multiplayer-actions {
+  flex-wrap: wrap;
+}
+
+.lobby-room-card {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.lobby-room-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 0.92rem;
+}
+
+.lobby-player-list {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.lobby-player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.lobby-player-meta {
+  opacity: 0.85;
+  font-size: 0.82rem;
 }
 
 @media (max-width: 640px) {

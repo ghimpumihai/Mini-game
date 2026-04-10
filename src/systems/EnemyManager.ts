@@ -1,5 +1,6 @@
 import { Enemy, EnemyConfig } from '../entities/Enemy';
 import { ObjectPool } from '../utils/ObjectPool';
+import type { EnemySnapshot } from '../multiplayer/protocol';
 
 /**
  * EnemyManager configuration
@@ -36,6 +37,7 @@ export class EnemyManager {
     private currentEnemySpeed: number;
     private difficultyTimer: number = 0;
     private difficultyLevel: number = 1;
+    private simulationEnabled: boolean = true;
 
     // Enemy visual variants
     private enemyColors: { color: string; glowColor: string }[] = [
@@ -64,20 +66,16 @@ export class EnemyManager {
      * Update all enemies and handle spawning
      */
     public update(deltaTime: number): void {
-        // Update spawn timer
-        this.spawnTimer += deltaTime;
+        if (this.simulationEnabled) {
+            // Update spawn timer
+            this.spawnTimer += deltaTime;
 
-        // Update difficulty timer
-        this.difficultyTimer += deltaTime;
-        if (this.difficultyTimer >= this.config.difficultyIncreaseInterval) {
-            this.increaseDifficulty();
-            this.difficultyTimer = 0;
-        }
-
-        // Spawn new enemy if timer exceeded
-        if (this.spawnTimer >= this.currentSpawnInterval) {
-            this.spawnEnemy();
-            this.spawnTimer = 0;
+            // Update difficulty timer
+            this.difficultyTimer += deltaTime;
+            if (this.difficultyTimer >= this.config.difficultyIncreaseInterval) {
+                this.increaseDifficulty();
+                this.difficultyTimer = 0;
+            }
         }
 
         // Update all enemies
@@ -88,6 +86,56 @@ export class EnemyManager {
 
         // Remove off-screen enemies
         this.removeOffScreenEnemies();
+
+        // Spawn after updates so newly created enemies do not move on the same frame.
+        if (this.simulationEnabled && this.spawnTimer >= this.currentSpawnInterval) {
+            this.spawnEnemy();
+            this.spawnTimer = 0;
+        }
+    }
+
+    public setSimulationEnabled(enabled: boolean): void {
+        this.simulationEnabled = enabled;
+    }
+
+    public serializeEnemies(): EnemySnapshot[] {
+        return this.enemyPool.getActiveObjects().map((enemy, index) => ({
+            enemyId: `enemy-${index}`,
+            position: {
+                x: enemy.position.x,
+                y: enemy.position.y,
+            },
+            velocity: {
+                x: enemy.velocity.x,
+                y: enemy.velocity.y,
+            },
+            width: enemy.width,
+            height: enemy.height,
+            color: enemy.getColor(),
+        }));
+    }
+
+    public applySnapshotEnemies(snapshots: EnemySnapshot[]): void {
+        this.enemyPool.clear();
+
+        snapshots.forEach(snapshot => {
+            const enemy = this.enemyPool.get();
+            enemy.initialize(
+                snapshot.position.x,
+                this.config.canvasHeight,
+                snapshot.velocity.y,
+                {
+                    width: snapshot.width,
+                    height: snapshot.height,
+                    color: snapshot.color,
+                    glowColor: snapshot.color,
+                }
+            );
+            enemy.position.x = snapshot.position.x;
+            enemy.position.y = snapshot.position.y;
+            enemy.velocity.x = snapshot.velocity.x;
+            enemy.velocity.y = snapshot.velocity.y;
+        });
     }
 
     /**
@@ -204,8 +252,8 @@ export class EnemyManager {
             width: width,
         };
 
-        const enemy = new Enemy(x, this.config.canvasHeight, speed, enemyConfig);
-        this.enemies.push(enemy);
+        const enemy = this.enemyPool.get();
+        enemy.initialize(x, this.config.canvasHeight, speed, enemyConfig);
     }
 
     /**
@@ -249,7 +297,7 @@ export class EnemyManager {
      * Get all active enemies (for collision detection)
      */
     public getEnemies(): Enemy[] {
-        return this.enemyPool.getActiveObjects();
+        return [...this.enemyPool.getActiveObjects()];
     }
 
     /**

@@ -134,4 +134,21 @@ export class Projectile extends Entity {
     public getShooter(): Player { return this.shooter; }
     public getTarget(): Player { return this.target; }
     public expire(): void { this.isExpired = true; }
+
+    public getRemainingLifetimeSeconds(): number {
+        return Math.max(0, this.lifetime - this.age);
+    }
+
+    public applySnapshotState(
+        position: { x: number; y: number },
+        velocity: { x: number; y: number },
+        expiresInSeconds: number
+    ): void {
+        this.position.x = position.x;
+        this.position.y = position.y;
+        this.velocity.x = velocity.x;
+        this.velocity.y = velocity.y;
+        this.age = Math.max(0, this.lifetime - Math.max(0, expiresInSeconds));
+        this.isExpired = expiresInSeconds <= 0;
+    }
 }

@@ -173,4 +173,34 @@ export class Bomb extends Entity {
     public isFinished(): boolean { return this.isExploded && !this.isExploding; }
     public getDamage(): number { return this.damage; }
     public getOwner(): Player { return this.owner; }
+
+    public getElapsedSeconds(): number {
+        if (!this.isExploded) {
+            return this.timer;
+        }
+
+        return this.fuseTime + this.explosionTimer;
+    }
+
+    public applySnapshotState(
+        position: { x: number; y: number },
+        isExploding: boolean,
+        elapsedSeconds: number
+    ): void {
+        this.position.x = position.x;
+        this.position.y = position.y;
+
+        this.timer = Math.max(0, Math.min(this.fuseTime, elapsedSeconds));
+        this.pulseTimer = elapsedSeconds;
+
+        if (isExploding || elapsedSeconds >= this.fuseTime) {
+            this.isExploded = true;
+            this.isExploding = isExploding;
+            this.explosionTimer = Math.max(0, elapsedSeconds - this.fuseTime);
+        } else {
+            this.isExploded = false;
+            this.isExploding = false;
+            this.explosionTimer = 0;
+        }
+    }
 }

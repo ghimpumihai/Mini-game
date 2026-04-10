@@ -2,6 +2,13 @@ import './style.css';
 import { Game } from './core/Game';
 import { GameState } from './core/GameState';
 import type { CubeHatType, CubeModelType } from './core/interfaces';
+import { NetworkClient } from './multiplayer/NetworkClient';
+import {
+    MAX_ROOM_PLAYERS,
+    createDefaultCustomization,
+    type RoomSummary,
+    type ServerToClientMessage,
+} from './multiplayer/protocol';
 import {
     CUBE_HATS,
     CUBE_MODELS,
@@ -18,6 +25,7 @@ import {
     DEFAULT_CANVAS_HEIGHT,
     DEFAULT_CANVAS_WIDTH,
 } from './constants/gameplay';
+import type { InputState } from './systems/InputHandler';
 
 /**
  * Neon Rain - Main Entry Point
@@ -107,6 +115,30 @@ const selectedHatByPlayer: Record<PlayerSlot, CubeHatType> = {
 };
 
 let game: Game | null = null;
+const networkClient = new NetworkClient();
+let networkInitialized = false;
+let multiplayerConnected = false;
+let multiplayerSelfPlayerId: string | null = null;
+let multiplayerRoom: RoomSummary | null = null;
+let multiplayerStatus = 'Connect to create or join a room.';
+let multiplayerDisplayName = `Player-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+let multiplayerJoinRoomCode = '';
+const NEUTRAL_INPUT_STATE: InputState = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    dash: false,
+    deployBomb: false,
+};
+const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
+let multiplayerMatchPlayerOrder: string[] = [];
+let multiplayerLocalPlayerIndex: number | null = null;
+let multiplayerInputSequence = 0;
+let multiplayerInputSyncIntervalId: number | null = null;
+let multiplayerSnapshotTick = 0;
+let multiplayerSnapshotSyncIntervalId: number | null = null;
+let multiplayerIsHost = false;
 
 const appElement = document.getElementById('app');
 const canvasElement = document.getElementById('gameCanvas');
@@ -139,6 +171,465 @@ function getSelectedHat(player: PlayerSlot): CubeHatOption {
     return selected ?? CUBE_HATS[0];
 }
 
+function getLobbyCustomization(): ReturnType<typeof createDefaultCustomization> {
+    return {
+        color: getSelectedColor('p1').value,
+        model: selectedModelByPlayer.p1,
+        hat: selectedHatByPlayer.p1,
+    };
+}
+
+function getSelfRoomPlayer(): RoomSummary['players'][number] | undefined {
+    if (!multiplayerRoom || !multiplayerSelfPlayerId) {
+        return undefined;
+    }
+
+    return multiplayerRoom.players.find(player => player.playerId === multiplayerSelfPlayerId);
+}
+
+function cloneInputState(inputState: InputState): InputState {
+    return {
+        left: inputState.left,
+        right: inputState.right,
+        up: inputState.up,
+        down: inputState.down,
+        dash: inputState.dash,
+        deployBomb: inputState.deployBomb,
+    };
+}
+
+function stopMultiplayerInputSync(): void {
+    if (multiplayerInputSyncIntervalId !== null) {
+        window.clearInterval(multiplayerInputSyncIntervalId);
+        multiplayerInputSyncIntervalId = null;
+    }
+
+    if (multiplayerSnapshotSyncIntervalId !== null) {
+        window.clearInterval(multiplayerSnapshotSyncIntervalId);
+        multiplayerSnapshotSyncIntervalId = null;
+    }
+
+    multiplayerRemoteInputByPlayerId.clear();
+    multiplayerMatchPlayerOrder = [];
+    multiplayerLocalPlayerIndex = null;
+    multiplayerInputSequence = 0;
+    multiplayerSnapshotTick = 0;
+    multiplayerIsHost = false;
+
+    if (game) {
+        game.setNetworkSyncContext({ role: 'local' });
+        game.setPlayerInputResolver(undefined);
+    }
+}
+
+function startMatchTransportLoops(): void {
+    if (multiplayerInputSyncIntervalId !== null) {
+        window.clearInterval(multiplayerInputSyncIntervalId);
+        multiplayerInputSyncIntervalId = null;
+    }
+
+    if (multiplayerSnapshotSyncIntervalId !== null) {
+        window.clearInterval(multiplayerSnapshotSyncIntervalId);
+        multiplayerSnapshotSyncIntervalId = null;
+    }
+
+    if (!game) {
+        return;
+    }
+
+    if (multiplayerIsHost) {
+        multiplayerSnapshotSyncIntervalId = window.setInterval(() => {
+            if (!game) {
+                return;
+            }
+
+            const snapshot = game.serializeSnapshot(multiplayerMatchPlayerOrder);
+            const sent = networkClient.sendSnapshot(multiplayerSnapshotTick, snapshot);
+            if (sent) {
+                multiplayerSnapshotTick++;
+            }
+        }, 66);
+
+        return;
+    }
+
+    multiplayerInputSyncIntervalId = window.setInterval(() => {
+        if (!game || multiplayerLocalPlayerIndex === null) {
+            return;
+        }
+
+        const localInput = game.getPlayerInputState(multiplayerLocalPlayerIndex);
+        if (!localInput) {
+            return;
+        }
+
+        const sent = networkClient.sendInputFrame(multiplayerInputSequence, localInput);
+        if (sent) {
+            multiplayerInputSequence++;
+        }
+    }, 50);
+}
+
+function refreshHostRoleForActiveMatch(): void {
+    if (!multiplayerRoom || !multiplayerSelfPlayerId) {
+        return;
+    }
+
+    multiplayerIsHost = multiplayerRoom.hostPlayerId === multiplayerSelfPlayerId;
+
+    if (!game || multiplayerMatchPlayerOrder.length === 0) {
+        return;
+    }
+
+    game.setNetworkSyncContext({
+        role: multiplayerIsHost ? 'host' : 'client',
+        playerOrder: multiplayerMatchPlayerOrder,
+        localPlayerId: multiplayerSelfPlayerId,
+    });
+
+    startMatchTransportLoops();
+}
+
+function startMultiplayerMatchFromRoom(): void {
+    if (!multiplayerRoom || !multiplayerSelfPlayerId) {
+        multiplayerStatus = 'Cannot start multiplayer match without room context.';
+        rerenderMultiplayerIfVisible();
+        return;
+    }
+
+    const activePlayers = multiplayerRoom.players.slice(0, 2);
+    if (activePlayers.length < 2) {
+        multiplayerStatus = 'Need at least 2 players in room to sync match inputs.';
+        rerenderMultiplayerIfVisible();
+        return;
+    }
+
+    const playerOrder = activePlayers.map(player => player.playerId);
+    const localPlayerIndex = playerOrder.findIndex(playerId => playerId === multiplayerSelfPlayerId);
+
+    if (localPlayerIndex < 0) {
+        multiplayerStatus = 'Current player is not part of the active synced slots.';
+        rerenderMultiplayerIfVisible();
+        return;
+    }
+
+    stopMultiplayerInputSync();
+
+    multiplayerMatchPlayerOrder = playerOrder;
+    multiplayerLocalPlayerIndex = localPlayerIndex;
+    multiplayerInputSequence = 0;
+    multiplayerSnapshotTick = 0;
+    multiplayerIsHost = multiplayerRoom.hostPlayerId === multiplayerSelfPlayerId;
+
+    if (game) {
+        returnToMainMenu();
+    }
+
+    startGame();
+    if (!game) {
+        multiplayerStatus = 'Failed to initialize game instance for multiplayer input sync.';
+        rerenderMultiplayerIfVisible();
+        return;
+    }
+
+    game.setNetworkSyncContext({
+        role: multiplayerIsHost ? 'host' : 'client',
+        playerOrder: multiplayerMatchPlayerOrder,
+        localPlayerId: multiplayerSelfPlayerId,
+    });
+
+    game.setPlayerInputResolver((_player, playerIndex) => {
+        const mappedPlayerId = multiplayerMatchPlayerOrder[playerIndex];
+        if (!mappedPlayerId) {
+            return NEUTRAL_INPUT_STATE;
+        }
+
+        if (mappedPlayerId === multiplayerSelfPlayerId) {
+            return undefined;
+        }
+
+        return multiplayerRemoteInputByPlayerId.get(mappedPlayerId) ?? NEUTRAL_INPUT_STATE;
+    });
+
+    startMatchTransportLoops();
+
+    multiplayerStatus = multiplayerIsHost
+        ? 'You are host: authoritative snapshots broadcasting.'
+        : `Client sync active in slot ${multiplayerLocalPlayerIndex + 1}.`;
+}
+
+function rerenderMultiplayerIfVisible(): void {
+    if (!menuOverlay.isConnected) {
+        return;
+    }
+
+    if (menuOverlay.querySelector('.multiplayer-panel')) {
+        showMultiplayerMenu();
+    }
+}
+
+function handleMultiplayerMessage(message: ServerToClientMessage): void {
+    switch (message.type) {
+        case 'connected':
+            multiplayerSelfPlayerId = message.playerId;
+            multiplayerStatus = 'Connected. Create a room or join with a code.';
+            break;
+        case 'room_joined':
+            multiplayerSelfPlayerId = message.playerId;
+            multiplayerRoom = message.room;
+            stopMultiplayerInputSync();
+            multiplayerStatus = `Joined room ${message.room.code}.`;
+            break;
+        case 'room_updated':
+            multiplayerRoom = message.room;
+            refreshHostRoleForActiveMatch();
+            break;
+        case 'player_left':
+            multiplayerRemoteInputByPlayerId.delete(message.playerId);
+            multiplayerStatus = `Player ${message.playerId.slice(0, 6)} left the room.`;
+            break;
+        case 'host_changed':
+            multiplayerStatus = `Host migrated to ${message.hostPlayerId.slice(0, 6)}.`;
+            if (multiplayerRoom) {
+                multiplayerRoom = {
+                    ...multiplayerRoom,
+                    hostPlayerId: message.hostPlayerId,
+                };
+            }
+            refreshHostRoleForActiveMatch();
+            break;
+        case 'match_started':
+            multiplayerStatus = `Match started for room ${message.roomCode}. Input sync engaged.`;
+            startMultiplayerMatchFromRoom();
+            break;
+        case 'error':
+            multiplayerStatus = message.message;
+            break;
+        case 'pong':
+            break;
+        case 'input_frame':
+            if (message.fromPlayerId !== multiplayerSelfPlayerId) {
+                multiplayerRemoteInputByPlayerId.set(message.fromPlayerId, cloneInputState(message.input));
+            }
+            break;
+        case 'state_snapshot':
+            if (!multiplayerIsHost && game && multiplayerRoom && message.fromPlayerId === multiplayerRoom.hostPlayerId) {
+                game.applySnapshot(message.snapshot, multiplayerMatchPlayerOrder, multiplayerSelfPlayerId);
+            }
+            break;
+        case 'game_event':
+            break;
+    }
+
+    rerenderMultiplayerIfVisible();
+}
+
+function initializeNetworkIfNeeded(): void {
+    if (networkInitialized) {
+        return;
+    }
+
+    networkInitialized = true;
+
+    networkClient.onConnectionChange((connected) => {
+        multiplayerConnected = connected;
+
+        if (!connected) {
+            stopMultiplayerInputSync();
+            multiplayerStatus = 'Disconnected from server. Reconnecting...';
+        }
+
+        rerenderMultiplayerIfVisible();
+    });
+
+    networkClient.onMessage(handleMultiplayerMessage);
+}
+
+function connectToMultiplayerAsync(): Promise<void> {
+    initializeNetworkIfNeeded();
+
+    if (networkClient.getIsConnected()) {
+        multiplayerConnected = true;
+        return Promise.resolve();
+    }
+
+    multiplayerStatus = 'Connecting to multiplayer service...';
+    rerenderMultiplayerIfVisible();
+
+    return networkClient.connectAsync()
+        .then(() => {
+            multiplayerConnected = true;
+        })
+        .catch(error => {
+            multiplayerConnected = false;
+            multiplayerStatus = `Connection failed: ${String(error)}`;
+            throw error;
+        });
+}
+
+function showMultiplayerMenu(): void {
+    if (!menuOverlay.isConnected) {
+        app.appendChild(menuOverlay);
+    }
+
+    const selfPlayer = getSelfRoomPlayer();
+    const hasRoom = Boolean(multiplayerRoom);
+    const isHost = Boolean(multiplayerRoom && multiplayerSelfPlayerId && multiplayerRoom.hostPlayerId === multiplayerSelfPlayerId);
+    const roomPlayers = multiplayerRoom?.players ?? [];
+
+    const rosterMarkup = roomPlayers.map(player => {
+        const role = multiplayerRoom?.hostPlayerId === player.playerId ? 'Host' : 'Peer';
+        const youLabel = player.playerId === multiplayerSelfPlayerId ? ' (You)' : '';
+        const readyLabel = player.ready ? 'Ready' : 'Not Ready';
+        return `
+            <li class="lobby-player-row">
+                <span>${player.displayName}${youLabel}</span>
+                <span class="lobby-player-meta">${role} - ${readyLabel}</span>
+            </li>
+        `;
+    }).join('');
+
+    menuOverlay.innerHTML = `
+        <div class="menu-panel multiplayer-panel">
+            <h2 class="menu-title">Online Lobby</h2>
+            <p class="menu-subtitle">Client-hosted multiplayer foundation (WebSocket)</p>
+
+            <div class="multiplayer-status ${multiplayerConnected ? 'connected' : 'disconnected'}">${multiplayerStatus}</div>
+
+            ${hasRoom ? `
+                <div class="lobby-room-card">
+                    <div class="lobby-room-header">
+                        <strong>Room Code: ${multiplayerRoom?.code}</strong>
+                        <span>${roomPlayers.length}/${MAX_ROOM_PLAYERS} players</span>
+                    </div>
+                    <ul class="lobby-player-list">${rosterMarkup}</ul>
+                </div>
+
+                <div class="menu-actions multiplayer-actions">
+                    <button id="toggleReadyBtn" class="menu-btn primary">${selfPlayer?.ready ? 'Set Not Ready' : 'Set Ready'}</button>
+                    <button id="startMatchBtn" class="menu-btn secondary" ${isHost ? '' : 'disabled'}>Start Match</button>
+                    <button id="leaveRoomBtn" class="menu-btn secondary">Leave Room</button>
+                    <button id="backToMainMenuBtn" class="menu-btn secondary">Back</button>
+                </div>
+            ` : `
+                <div class="multiplayer-form">
+                    <label for="displayNameInput">Display Name</label>
+                    <input id="displayNameInput" maxlength="20" value="${multiplayerDisplayName}" />
+
+                    <label for="roomCodeInput">Room Code</label>
+                    <input id="roomCodeInput" maxlength="6" placeholder="ABC123" value="${multiplayerJoinRoomCode}" />
+                </div>
+
+                <div class="menu-actions multiplayer-actions">
+                    <button id="createRoomBtn" class="menu-btn primary">Create Room</button>
+                    <button id="joinRoomBtn" class="menu-btn secondary">Join Room</button>
+                    <button id="backToMainMenuBtn" class="menu-btn secondary">Back</button>
+                </div>
+            `}
+        </div>
+    `;
+
+    const backToMainMenuBtn = document.getElementById('backToMainMenuBtn');
+    backToMainMenuBtn?.addEventListener('click', showStartMenu);
+
+    if (!hasRoom) {
+        const displayNameInput = document.getElementById('displayNameInput') as HTMLInputElement | null;
+        const roomCodeInput = document.getElementById('roomCodeInput') as HTMLInputElement | null;
+
+        displayNameInput?.addEventListener('input', () => {
+            multiplayerDisplayName = displayNameInput.value;
+        });
+
+        roomCodeInput?.addEventListener('input', () => {
+            multiplayerJoinRoomCode = roomCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+            roomCodeInput.value = multiplayerJoinRoomCode;
+        });
+
+        const createRoomBtn = document.getElementById('createRoomBtn');
+        const joinRoomBtn = document.getElementById('joinRoomBtn');
+
+        createRoomBtn?.addEventListener('click', () => {
+            multiplayerDisplayName = (displayNameInput?.value ?? multiplayerDisplayName).trim() || multiplayerDisplayName;
+
+            connectToMultiplayerAsync()
+                .then(() => {
+                    const sent = networkClient.createRoom(multiplayerDisplayName, getLobbyCustomization());
+                    if (!sent) {
+                        multiplayerStatus = 'Could not create room. Socket is not open yet.';
+                        showMultiplayerMenu();
+                    }
+                })
+                .catch(() => {
+                    showMultiplayerMenu();
+                });
+        });
+
+        joinRoomBtn?.addEventListener('click', () => {
+            multiplayerDisplayName = (displayNameInput?.value ?? multiplayerDisplayName).trim() || multiplayerDisplayName;
+            multiplayerJoinRoomCode = (roomCodeInput?.value ?? multiplayerJoinRoomCode).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+
+            if (multiplayerJoinRoomCode.length < 4) {
+                multiplayerStatus = 'Enter a valid room code.';
+                showMultiplayerMenu();
+                return;
+            }
+
+            connectToMultiplayerAsync()
+                .then(() => {
+                    const sent = networkClient.joinRoom(
+                        multiplayerJoinRoomCode,
+                        multiplayerDisplayName,
+                        getLobbyCustomization()
+                    );
+
+                    if (!sent) {
+                        multiplayerStatus = 'Could not join room. Socket is not open yet.';
+                        showMultiplayerMenu();
+                    }
+                })
+                .catch(() => {
+                    showMultiplayerMenu();
+                });
+        });
+
+        return;
+    }
+
+    const toggleReadyBtn = document.getElementById('toggleReadyBtn');
+    const startMatchBtn = document.getElementById('startMatchBtn');
+    const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+
+    toggleReadyBtn?.addEventListener('click', () => {
+        const nextReadyValue = !(selfPlayer?.ready ?? false);
+        const sent = networkClient.setReady(nextReadyValue);
+        if (!sent) {
+            multiplayerStatus = 'Failed to send ready state.';
+            showMultiplayerMenu();
+        }
+    });
+
+    startMatchBtn?.addEventListener('click', () => {
+        const sent = networkClient.startMatch();
+        if (!sent) {
+            multiplayerStatus = 'Failed to send start signal.';
+            showMultiplayerMenu();
+        }
+    });
+
+    leaveRoomBtn?.addEventListener('click', () => {
+        stopMultiplayerInputSync();
+
+        if (game) {
+            returnToMainMenu();
+        }
+
+        networkClient.leaveRoom();
+        multiplayerRoom = null;
+        multiplayerStatus = 'Left room.';
+        showMultiplayerMenu();
+    });
+}
+
 function showStartMenu(): void {
     if (!menuOverlay.isConnected) {
         app.appendChild(menuOverlay);
@@ -168,15 +659,26 @@ function showStartMenu(): void {
 
             <div class="menu-actions">
                 <button id="startGameBtn" class="menu-btn primary">Start Game</button>
+                <button id="openMultiplayerBtn" class="menu-btn primary">Multiplayer Lobby</button>
                 <button id="openCustomizeBtn" class="menu-btn secondary">Customize</button>
             </div>
         </div>
     `;
 
     const startGameBtn = document.getElementById('startGameBtn');
+    const openMultiplayerBtn = document.getElementById('openMultiplayerBtn');
     const openCustomizeBtn = document.getElementById('openCustomizeBtn');
 
     startGameBtn?.addEventListener('click', startGame);
+    openMultiplayerBtn?.addEventListener('click', () => {
+        connectToMultiplayerAsync()
+            .catch(() => {
+                // Keep menu open and status visible on failure.
+            })
+            .finally(() => {
+                showMultiplayerMenu();
+            });
+    });
     openCustomizeBtn?.addEventListener('click', showCustomizeMenu);
 }
 
@@ -311,7 +813,12 @@ function showCustomizeMenu(): void {
 }
 
 function returnToMainMenu(): void {
-    if (!game) return;
+    stopMultiplayerInputSync();
+
+    if (!game) {
+        showStartMenu();
+        return;
+    }
 
     game.stop();
     game = null;

@@ -132,4 +132,8 @@ export class Enemy extends Entity {
     public getSpeed(): number {
         return this.velocity.y;
     }
+
+    public getColor(): string {
+        return this.color;
+    }
 }
