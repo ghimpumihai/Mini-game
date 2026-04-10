@@ -228,6 +228,13 @@ export class Game {
                 this.players.forEach(player => {
                     if (player.getIsAlive()) {
                         player.update(deltaTime);
+
+                        const heldBombExpired = player.updateStoredBombTimers(deltaTime);
+                        if (heldBombExpired) {
+                            player.kill();
+                            console.log(`💀 ${player.getLabel()} held a bomb too long and exploded!`);
+                            this.handlePlayerDeath(player);
+                        }
                     }
                 });
 
@@ -257,6 +264,7 @@ export class Game {
 
                 // Check detections
                 this.checkPowerupCollection();
+                this.handleBombDeployInput();
                 this.checkCollisions();
                 this.checkPvPCollisions();
                 this.checkGameEnd();
@@ -356,6 +364,8 @@ export class Game {
      */
     private checkPowerupCollection(): void {
         this.players.forEach(player => {
+            if (!player.getIsAlive()) return;
+
             const collectedType = this.powerupManager.checkCollection(player);
             if (collectedType) {
                 this.activatePowerup(player, collectedType);
@@ -402,14 +412,39 @@ export class Game {
                 break;
 
             case PowerupType.BOMB:
-                const bomb = new Bomb(
-                    player.position.x + player.width / 2,
-                    player.position.y + player.height / 2,
-                    player
-                );
-                this.bombs.push(bomb);
+                player.addStoredBomb(1);
+                console.log(`💣 ${player.getLabel()} picked up a bomb (${player.getStoredBombs()} ready)`);
                 break;
         }
+    }
+
+    /**
+     * Handle bomb deployment input for both players.
+     */
+    private handleBombDeployInput(): void {
+        this.players.forEach(player => {
+            if (!player.getIsAlive()) return;
+
+            const wantsToDeployBomb = player.consumeBombDeployInput();
+            if (!wantsToDeployBomb) return;
+
+            if (player.consumeStoredBomb()) {
+                this.deployBomb(player);
+            }
+        });
+    }
+
+    /**
+     * Spawn a bomb at the player's current center position.
+     */
+    private deployBomb(player: Player): void {
+        const bomb = new Bomb(
+            player.position.x + player.width / 2,
+            player.position.y + player.height / 2,
+            player
+        );
+        this.bombs.push(bomb);
+        console.log(`💥 ${player.getLabel()} deployed a bomb`);
     }
 
     /**

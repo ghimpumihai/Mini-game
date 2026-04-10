@@ -7,7 +7,7 @@ import { SinTable } from '../utils/SinTable';
  */
 export class Bomb extends Entity {
     private owner: Player;
-    private fuseTime: number = 2; // seconds until explosion
+    private fuseTime: number = 1.5; // seconds until explosion
     private timer: number = 0;
     private isExploded: boolean = false;
     private explosionRadius: number = 80;

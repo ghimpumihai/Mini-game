@@ -7,6 +7,7 @@ export interface KeyBindings {
     up: string[];
     down: string[];
     dash: string[];
+    deployBomb: string[];
 }
 
 /**
@@ -18,6 +19,7 @@ export const PLAYER_1_KEYS: KeyBindings = {
     up: ['KeyW'],
     down: ['KeyS'],
     dash: ['ShiftLeft', 'ShiftRight'],
+    deployBomb: ['KeyQ'],
 };
 
 /**
@@ -29,6 +31,7 @@ export const PLAYER_2_KEYS: KeyBindings = {
     up: ['ArrowUp'],
     down: ['ArrowDown'],
     dash: ['Space'],
+    deployBomb: ['Digit0', 'Numpad0'],
 };
 
 /**
@@ -40,6 +43,7 @@ export const DEFAULT_KEYS: KeyBindings = {
     up: ['KeyW', 'ArrowUp'],
     down: ['KeyS', 'ArrowDown'],
     dash: ['Space', 'ShiftLeft', 'ShiftRight'],
+    deployBomb: ['KeyQ', 'Digit0', 'Numpad0'],
 };
 
 /**
@@ -51,6 +55,7 @@ export interface InputState {
     up: boolean;
     down: boolean;
     dash: boolean;
+    deployBomb: boolean;
 }
 
 /**
@@ -60,6 +65,7 @@ export class InputHandler {
     private keys: InputState;
     private keyBindings: KeyBindings;
     private playerLabel: string;
+    private bombDeployPressed: boolean = false;
 
     constructor(keyBindings: KeyBindings = DEFAULT_KEYS, playerLabel: string = 'Player') {
         this.keyBindings = keyBindings;
@@ -71,6 +77,7 @@ export class InputHandler {
             up: false,
             down: false,
             dash: false,
+            deployBomb: false,
         };
 
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
@@ -93,6 +100,14 @@ export class InputHandler {
         if (this.keyBindings.up.includes(code)) this.keys.up = isPressed;
         if (this.keyBindings.down.includes(code)) this.keys.down = isPressed;
         if (this.keyBindings.dash.includes(code)) this.keys.dash = isPressed;
+
+        if (this.keyBindings.deployBomb.includes(code)) {
+            // Queue a single deploy action on the keydown edge.
+            if (isPressed && !this.keys.deployBomb) {
+                this.bombDeployPressed = true;
+            }
+            this.keys.deployBomb = isPressed;
+        }
     }
 
     public getState(): InputState { return { ...this.keys }; }
@@ -101,6 +116,13 @@ export class InputHandler {
     public isUp(): boolean { return this.keys.up; }
     public isDown(): boolean { return this.keys.down; }
     public isDashing(): boolean { return this.keys.dash; }
+    public isBombDeploying(): boolean { return this.keys.deployBomb; }
+
+    public consumeBombDeployPressed(): boolean {
+        const wasPressed = this.bombDeployPressed;
+        this.bombDeployPressed = false;
+        return wasPressed;
+    }
 
     public getHorizontalAxis(): number {
         let axis = 0;

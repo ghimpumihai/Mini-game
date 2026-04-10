@@ -34,7 +34,7 @@ describe('PvP Phase: Powerups & Combat', () => {
         });
 
         it('should count down and explode', () => {
-            // Fuse is 2 seconds
+            // Fuse is 1.5 seconds
             bomb.update(1.0);
             expect(bomb.getIsExploded()).toBe(false);
 

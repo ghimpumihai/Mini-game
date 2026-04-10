@@ -69,6 +69,11 @@ export class Player extends Entity {
     private knockbackDecay: number = 0.9;
     private damageFlashTimer: number = 0;
 
+    // Powerup inventory
+    private storedBombs: number = 0;
+    private storedBombTimers: number[] = [];
+    private static readonly STORED_BOMB_TIMEOUT_SECONDS: number = 8;
+
     constructor(
         canvasWidth: number,
         canvasHeight: number,
@@ -202,6 +207,8 @@ export class Player extends Entity {
         ctx.textAlign = 'center';
         ctx.fillText(this.config.label, this.position.x + this.width / 2, this.position.y - 25);
 
+        this.drawBombIndicator(ctx);
+
         // Shield Effect Ring
         if (this.isShielded) {
             ctx.shadowBlur = 15;
@@ -215,6 +222,49 @@ export class Player extends Entity {
 
         this.drawHealthBar(ctx);
         ctx.restore();
+    }
+
+    private drawBombIndicator(ctx: CanvasRenderingContext2D): void {
+        if (this.storedBombs <= 0) return;
+
+        const iconSize = 8;
+        const iconX = this.position.x + this.width / 2 - iconSize / 2;
+        const iconY = this.position.y - 40;
+        const timeLeft = this.getEarliestBombTimeLeft();
+
+        // Countdown text above the icon so players can react before self-detonation.
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = '#ff3300';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${timeLeft.toFixed(1)}s`, this.position.x + this.width / 2, iconY - 6);
+
+        // Bomb body
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = '#ff6600';
+        ctx.fillStyle = '#ff6600';
+        ctx.fillRect(iconX, iconY, iconSize, iconSize);
+
+        // Fuse
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffff00';
+        ctx.fillRect(iconX + iconSize / 2 - 1, iconY - 3, 2, 3);
+
+        if (this.storedBombs > 1) {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${this.storedBombs}`, iconX + iconSize + 2, iconY + iconSize);
+        }
+    }
+
+    private getEarliestBombTimeLeft(): number {
+        if (this.storedBombTimers.length === 0) {
+            return 0;
+        }
+
+        return Math.max(0, Math.min(...this.storedBombTimers));
     }
 
     private drawHealthBar(ctx: CanvasRenderingContext2D): void {
@@ -241,6 +291,50 @@ export class Player extends Entity {
     public getHealth(): number { return this.health; }
     public getMaxHealth(): number { return this.maxHealth; }
     public getLabel(): string { return this.config.label; }
+    public getStoredBombs(): number { return this.storedBombs; }
+
+    public addStoredBomb(count: number = 1): void {
+        const bombsToAdd = Math.max(0, Math.floor(count));
+        this.storedBombs += bombsToAdd;
+
+        for (let i = 0; i < bombsToAdd; i++) {
+            this.storedBombTimers.push(Player.STORED_BOMB_TIMEOUT_SECONDS);
+        }
+    }
+
+    public consumeStoredBomb(): boolean {
+        if (this.storedBombs <= 0) return false;
+        this.storedBombs--;
+        this.storedBombTimers.shift();
+        return true;
+    }
+
+    /**
+     * Update timers on held bombs.
+     * Returns true when any held bomb expires.
+     */
+    public updateStoredBombTimers(deltaTime: number): boolean {
+        if (this.storedBombs <= 0) return false;
+
+        this.storedBombTimers = this.storedBombTimers.map(timer => timer - deltaTime);
+        const hasExpiredBomb = this.storedBombTimers.some(timer => timer <= 0);
+
+        if (hasExpiredBomb) {
+            this.clearStoredBombs();
+            return true;
+        }
+
+        return false;
+    }
+
+    public clearStoredBombs(): void {
+        this.storedBombs = 0;
+        this.storedBombTimers = [];
+    }
+
+    public consumeBombDeployInput(): boolean {
+        return this.input.consumeBombDeployPressed();
+    }
 
     public kill(): void { this.isAlive = false; }
     public reset(): void {
@@ -252,6 +346,7 @@ export class Player extends Entity {
         this.isAlive = true;
         this.isShielded = false;
         this.shieldTimer = 0;
+        this.clearStoredBombs();
     }
 
     public getCenter(): { x: number, y: number } {

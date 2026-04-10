@@ -149,6 +149,24 @@ describe('Phase 2: Player', () => {
             expect(mockCtx.fillRect).toHaveBeenCalled();
         });
 
+        it('should draw bomb indicator above player when a bomb is stored', () => {
+            const mockCtx = createMockContext();
+
+            player1.addStoredBomb(2);
+            player1.draw(mockCtx);
+
+            expect(mockCtx.fillText).toHaveBeenCalledWith('2', expect.any(Number), expect.any(Number));
+        });
+
+        it('should draw bomb timer text above player when a bomb is stored', () => {
+            const mockCtx = createMockContext();
+
+            player1.addStoredBomb(1);
+            player1.draw(mockCtx);
+
+            expect(mockCtx.fillText).toHaveBeenCalledWith('8.0s', expect.any(Number), expect.any(Number));
+        });
+
         it('should not draw when dead', () => {
             const mockCtx = createMockContext();
 
