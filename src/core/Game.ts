@@ -80,6 +80,10 @@ export class Game {
     };
     private readonly fpsLimit: number;
     private readonly minFrameIntervalSeconds: number;
+    private readonly enableParticles: boolean;
+    private readonly enableTrailParticles: boolean;
+    private readonly enableMapGlow: boolean;
+    private readonly showFpsHud: boolean;
 
     private static readonly MULTIPLAYER_FALLBACK_COLORS = ['#00ffff', '#ff00ff', '#39ff14', '#ff9100'];
 
@@ -105,6 +109,10 @@ export class Game {
                 : 0;
         this.fpsLimit = normalizedFpsLimit;
         this.minFrameIntervalSeconds = normalizedFpsLimit > 0 ? 1 / normalizedFpsLimit : 0;
+        this.enableParticles = config?.enableParticles ?? true;
+        this.enableTrailParticles = config?.enableTrailParticles ?? true;
+        this.enableMapGlow = config?.enableMapGlow ?? true;
+        this.showFpsHud = config?.showFpsHud ?? true;
 
         // Set default configuration
         this.config = {
@@ -112,6 +120,10 @@ export class Game {
             canvasHeight: config?.canvasHeight ?? DEFAULT_CANVAS_HEIGHT,
             backgroundColor: config?.backgroundColor ?? DEFAULT_BACKGROUND_COLOR,
             fpsLimit: normalizedFpsLimit > 0 ? normalizedFpsLimit : undefined,
+            enableParticles: this.enableParticles,
+            enableTrailParticles: this.enableTrailParticles,
+            enableMapGlow: this.enableMapGlow,
+            showFpsHud: this.showFpsHud,
             player1Color: config?.player1Color,
             player2Color: config?.player2Color,
             player1Model: config?.player1Model,
@@ -365,7 +377,9 @@ export class Game {
      */
     private update(deltaTime: number): void {
         try {
-            this.particles.update(deltaTime);
+            if (this.enableParticles) {
+                this.particles.update(deltaTime);
+            }
 
             if (this.gameState === GameState.PLAYING) {
                 if (this.networkRole === 'client') {
@@ -457,6 +471,32 @@ export class Game {
         this.bombs = this.bombs.filter(b => !b.isFinished());
     }
 
+    private spawnSparkles(
+        x: number,
+        y: number,
+        color: string,
+        count: number
+    ): void {
+        if (!this.enableParticles) {
+            return;
+        }
+
+        this.particles.spawnSparkles(x, y, color, count);
+    }
+
+    private spawnExplosion(
+        x: number,
+        y: number,
+        colors: string[],
+        count: number
+    ): void {
+        if (!this.enableParticles) {
+            return;
+        }
+
+        this.particles.spawnExplosion(x, y, colors, count);
+    }
+
     /**
      * Handle physical collision between players (knockback)
      */
@@ -492,7 +532,7 @@ export class Game {
                 firstPlayer.applyKnockback(nx, ny, 300);
                 secondPlayer.applyKnockback(-nx, -ny, 300);
 
-                this.particles.spawnSparkles(
+                this.spawnSparkles(
                     firstPlayer.position.x + firstPlayer.width / 2 - (dx / 2),
                     firstPlayer.position.y + firstPlayer.height / 2 - (dy / 2),
                     '#ffffff',
@@ -506,6 +546,15 @@ export class Game {
      * Update player trail particles
      */
     private updatePlayerTrails(deltaTime: number): void {
+        if (!this.enableParticles || !this.enableTrailParticles) {
+            this.players.forEach((player, index) => {
+                this.lastPlayerPositions[index].x = player.position.x;
+                this.lastPlayerPositions[index].y = player.position.y;
+            });
+            this.trailTimer = 0;
+            return;
+        }
+
         this.trailTimer += deltaTime;
 
         this.players.forEach((player, index) => {
@@ -530,7 +579,7 @@ export class Game {
                 );
 
                 if (isDashing) {
-                    this.particles.spawnSparkles(
+                    this.spawnSparkles(
                         player.position.x + player.width / 2,
                         player.position.y + player.height / 2,
                         player.getColor(),
@@ -559,7 +608,7 @@ export class Game {
                 this.activatePowerup(player, collectedType);
 
                 // Spawn collection particles
-                this.particles.spawnSparkles(
+                this.spawnSparkles(
                     player.position.x + player.width / 2,
                     player.position.y + player.height / 2,
                     '#ffffff',
@@ -581,7 +630,7 @@ export class Game {
             case PowerupType.HEAL: {
                 const healedAmount = player.heal(HEAL_POWERUP_AMOUNT);
                 if (healedAmount > 0) {
-                    this.particles.spawnSparkles(
+                    this.spawnSparkles(
                         player.position.x + player.width / 2,
                         player.position.y + player.height / 2,
                         '#33ff99',
@@ -679,7 +728,7 @@ export class Game {
                 const died = player.takeDamage(20);
 
                 // Visual feedback
-                this.particles.spawnSparkles(
+                this.spawnSparkles(
                     player.position.x + player.width / 2,
                     player.position.y + player.height / 2,
                     player.getColor(),
@@ -711,7 +760,7 @@ export class Game {
                     proj.expire();
 
                     // Impact particles
-                    this.particles.spawnSparkles(
+                    this.spawnSparkles(
                         proj.position.x,
                         proj.position.y,
                         proj.getShooter().getColor(),
@@ -745,7 +794,7 @@ export class Game {
     private handlePlayerDeath(player: Player): void {
         console.log(`💀 ${player.getLabel()} eliminated!`);
 
-        this.particles.spawnExplosion(
+        this.spawnExplosion(
             player.position.x + player.width / 2,
             player.position.y + player.height / 2,
             [player.getColor(), '#ffffff', '#ff0066'],
@@ -796,7 +845,9 @@ export class Game {
         }
 
         // Draw game elements in layer order
-        this.particles.draw(this.ctx);
+        if (this.enableParticles) {
+            this.particles.draw(this.ctx);
+        }
         this.bombs.forEach(b => b.draw(this.ctx));
         this.powerupManager.draw(this.ctx);
         this.enemyManager.draw(this.ctx); // Rain is foreground-ish
@@ -863,8 +914,8 @@ export class Game {
 
         this.ctx.strokeStyle = this.mapBorderColor;
         this.ctx.lineWidth = lineWidth;
-        this.ctx.shadowBlur = 10;
-        this.ctx.shadowColor = this.mapBorderColor;
+        this.ctx.shadowBlur = this.enableMapGlow ? 10 : 0;
+        this.ctx.shadowColor = this.enableMapGlow ? this.mapBorderColor : 'transparent';
         this.ctx.strokeRect(inset, inset, width, height);
 
         this.ctx.restore();
@@ -887,6 +938,10 @@ export class Game {
         this.ctx.restore();
 
         // FPS
+        if (!this.showFpsHud) {
+            return;
+        }
+
         this.ctx.save();
         this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
         this.ctx.font = '12px monospace';

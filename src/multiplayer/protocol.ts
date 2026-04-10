@@ -133,6 +133,7 @@ export interface MatchStartedMessage {
     roomCode: string;
     hostPlayerId: string;
     startedAtMs: number;
+    room: RoomSummary;
 }
 
 export interface InputForwardMessage {
@@ -350,7 +351,12 @@ export function isServerToClientMessage(value: unknown): value is ServerToClient
         case 'host_changed':
             return isString(value.hostPlayerId);
         case 'match_started':
-            return isString(value.roomCode) && isString(value.hostPlayerId) && isNumber(value.startedAtMs);
+            return (
+                isString(value.roomCode)
+                && isString(value.hostPlayerId)
+                && isNumber(value.startedAtMs)
+                && isRecord(value.room)
+            );
         case 'input_frame':
             return isString(value.fromPlayerId) && isNumber(value.sequence) && isInputFrameState(value.input);
         case 'state_snapshot':

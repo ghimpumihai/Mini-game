@@ -362,6 +362,7 @@ function startMatch(playerId: string): void {
         roomCode: room.code,
         hostPlayerId: room.hostPlayerId,
         startedAtMs: Date.now(),
+        room: roomToSummary(room),
     });
 }
 

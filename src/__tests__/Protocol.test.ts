@@ -62,6 +62,37 @@ describe('Multiplayer protocol guards', () => {
         expect(isServerToClientMessage(message)).toBe(true);
     });
 
+    it('accepts valid match_started messages with room summary', () => {
+        const message = {
+            type: 'match_started',
+            roomCode: 'ABC123',
+            hostPlayerId: 'host-id',
+            startedAtMs: Date.now(),
+            room: {
+                code: 'ABC123',
+                hostPlayerId: 'host-id',
+                started: true,
+                maxPlayers: 4,
+                players: [
+                    {
+                        playerId: 'host-id',
+                        displayName: 'Host',
+                        ready: true,
+                        customization: { color: '#00ffff', model: 'core', hat: 'none' },
+                    },
+                    {
+                        playerId: 'peer-id',
+                        displayName: 'Peer',
+                        ready: true,
+                        customization: { color: '#ff00ff', model: 'cross', hat: 'cap' },
+                    },
+                ],
+            },
+        };
+
+        expect(isServerToClientMessage(message)).toBe(true);
+    });
+
     it('encodes and decodes wire payloads consistently', () => {
         const original = {
             type: 'ping',

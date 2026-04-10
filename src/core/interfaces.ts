@@ -36,6 +36,10 @@ export interface GameConfig {
     canvasHeight: number;
     backgroundColor: string;
     fpsLimit?: number;
+    enableParticles?: boolean;
+    enableTrailParticles?: boolean;
+    enableMapGlow?: boolean;
+    showFpsHud?: boolean;
     player1Color?: string;
     player2Color?: string;
     player1Model?: CubeModelType;

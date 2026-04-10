@@ -47,6 +47,23 @@ function isValidHatId(hatId: string): hatId is CubeHatType {
 const FPS_LIMIT_OPTIONS = [0, 30, 60, 90, 120, 144] as const;
 type FpsLimitOption = typeof FPS_LIMIT_OPTIONS[number];
 const FPS_LIMIT_STORAGE_KEY = 'neon-rain.fps-limit';
+const GRAPHICS_SETTINGS_STORAGE_KEY = 'neon-rain.graphics-settings-v1';
+
+type GraphicsSettings = {
+    particles: boolean;
+    trails: boolean;
+    mapGlow: boolean;
+    fpsHud: boolean;
+    reduceClientEffects: boolean;
+};
+
+const DEFAULT_GRAPHICS_SETTINGS: GraphicsSettings = {
+    particles: true,
+    trails: true,
+    mapGlow: true,
+    fpsHud: true,
+    reduceClientEffects: true,
+};
 
 const MULTIPLAYER_SHARED_KEYS: KeyBindings = {
     left: ['KeyA'],
@@ -89,6 +106,37 @@ function persistFpsLimitSelection(value: FpsLimitOption): void {
 
 function getFpsLimitLabel(limit: FpsLimitOption): string {
     return limit === 0 ? 'Display Refresh (Uncapped)' : `${limit} FPS`;
+}
+
+function loadPersistedGraphicsSettings(): GraphicsSettings {
+    try {
+        const raw = window.localStorage.getItem(GRAPHICS_SETTINGS_STORAGE_KEY);
+        if (!raw) {
+            return { ...DEFAULT_GRAPHICS_SETTINGS };
+        }
+
+        const parsed = JSON.parse(raw) as Partial<GraphicsSettings>;
+        return {
+            particles: typeof parsed.particles === 'boolean' ? parsed.particles : DEFAULT_GRAPHICS_SETTINGS.particles,
+            trails: typeof parsed.trails === 'boolean' ? parsed.trails : DEFAULT_GRAPHICS_SETTINGS.trails,
+            mapGlow: typeof parsed.mapGlow === 'boolean' ? parsed.mapGlow : DEFAULT_GRAPHICS_SETTINGS.mapGlow,
+            fpsHud: typeof parsed.fpsHud === 'boolean' ? parsed.fpsHud : DEFAULT_GRAPHICS_SETTINGS.fpsHud,
+            reduceClientEffects:
+                typeof parsed.reduceClientEffects === 'boolean'
+                    ? parsed.reduceClientEffects
+                    : DEFAULT_GRAPHICS_SETTINGS.reduceClientEffects,
+        };
+    } catch {
+        return { ...DEFAULT_GRAPHICS_SETTINGS };
+    }
+}
+
+function persistGraphicsSettings(settings: GraphicsSettings): void {
+    try {
+        window.localStorage.setItem(GRAPHICS_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+        // Ignore storage failures and continue gameplay.
+    }
 }
 
 function loadPersistedColor(player: PlayerSlot, fallback: string): string {
@@ -161,6 +209,7 @@ const selectedHatByPlayer: Record<PlayerSlot, CubeHatType> = {
     p2: loadPersistedHat('p2', DEFAULT_PLAYER_CUSTOMIZATION.p2.hat),
 };
 let selectedFpsLimit: FpsLimitOption = loadPersistedFpsLimit();
+let graphicsSettings: GraphicsSettings = loadPersistedGraphicsSettings();
 
 let game: Game | null = null;
 const networkClient = new NetworkClient();
@@ -338,14 +387,17 @@ function refreshHostRoleForActiveMatch(): void {
     startMatchTransportLoops();
 }
 
-function startMultiplayerMatchFromRoom(): boolean {
-    if (!multiplayerRoom || !multiplayerSelfPlayerId) {
+function startMultiplayerMatchFromRoom(roomOverride?: RoomSummary): boolean {
+    const activeRoom = roomOverride ?? multiplayerRoom;
+    if (!activeRoom || !multiplayerSelfPlayerId) {
         multiplayerStatus = 'Cannot start multiplayer match without room context.';
         rerenderMultiplayerIfVisible();
         return false;
     }
 
-    const activePlayers = multiplayerRoom.players;
+    multiplayerRoom = activeRoom;
+
+    const activePlayers = activeRoom.players;
     if (activePlayers.length < 2) {
         multiplayerStatus = 'Need at least 2 players in room to sync match inputs.';
         rerenderMultiplayerIfVisible();
@@ -367,7 +419,7 @@ function startMultiplayerMatchFromRoom(): boolean {
     multiplayerLocalPlayerIndex = localPlayerIndex;
     multiplayerInputSequence = 0;
     multiplayerSnapshotTick = 0;
-    multiplayerIsHost = multiplayerRoom.hostPlayerId === multiplayerSelfPlayerId;
+    multiplayerIsHost = activeRoom.hostPlayerId === multiplayerSelfPlayerId;
 
     if (game) {
         returnToMainMenu();
@@ -380,6 +432,7 @@ function startMultiplayerMatchFromRoom(): boolean {
             hat: player.customization.hat,
             label: player.displayName,
         })),
+        multiplayerRole: multiplayerIsHost ? 'host' : 'client',
     });
     if (!game) {
         multiplayerStatus = 'Failed to initialize game instance for multiplayer input sync.';
@@ -444,7 +497,7 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             refreshHostRoleForActiveMatch();
 
             if (multiplayerMatchStartPending && message.room.started) {
-                startMultiplayerMatchFromRoom();
+                startMultiplayerMatchFromRoom(message.room);
             }
             break;
         case 'player_left':
@@ -463,8 +516,9 @@ function handleMultiplayerMessage(message: ServerToClientMessage): void {
             break;
         case 'match_started':
             multiplayerStatus = `Match started for room ${message.roomCode}. Input sync engaged.`;
+            multiplayerRoom = message.room;
             multiplayerMatchStartPending = true;
-            startMultiplayerMatchFromRoom();
+            startMultiplayerMatchFromRoom(message.room);
             break;
         case 'error':
             multiplayerStatus = message.message;
@@ -731,6 +785,14 @@ function showStartMenu(): void {
                 <select id="fpsLimitSelect">${fpsOptionsMarkup}</select>
             </div>
 
+            <div class="graphics-settings-grid">
+                <label class="graphics-toggle"><input id="graphicsParticlesToggle" type="checkbox" ${graphicsSettings.particles ? 'checked' : ''} /> Particles</label>
+                <label class="graphics-toggle"><input id="graphicsTrailsToggle" type="checkbox" ${graphicsSettings.trails ? 'checked' : ''} /> Trails</label>
+                <label class="graphics-toggle"><input id="graphicsMapGlowToggle" type="checkbox" ${graphicsSettings.mapGlow ? 'checked' : ''} /> Map Glow</label>
+                <label class="graphics-toggle"><input id="graphicsFpsHudToggle" type="checkbox" ${graphicsSettings.fpsHud ? 'checked' : ''} /> FPS HUD</label>
+                <label class="graphics-toggle wide"><input id="graphicsClientReductionToggle" type="checkbox" ${graphicsSettings.reduceClientEffects ? 'checked' : ''} /> Multiplayer Client Low FX</label>
+            </div>
+
             <div class="menu-actions">
                 <button id="startGameBtn" class="menu-btn primary">Start Game</button>
                 <button id="openMultiplayerBtn" class="menu-btn primary">Multiplayer Lobby</button>
@@ -743,6 +805,11 @@ function showStartMenu(): void {
     const openMultiplayerBtn = document.getElementById('openMultiplayerBtn');
     const openCustomizeBtn = document.getElementById('openCustomizeBtn');
     const fpsLimitSelect = document.getElementById('fpsLimitSelect') as HTMLSelectElement | null;
+    const graphicsParticlesToggle = document.getElementById('graphicsParticlesToggle') as HTMLInputElement | null;
+    const graphicsTrailsToggle = document.getElementById('graphicsTrailsToggle') as HTMLInputElement | null;
+    const graphicsMapGlowToggle = document.getElementById('graphicsMapGlowToggle') as HTMLInputElement | null;
+    const graphicsFpsHudToggle = document.getElementById('graphicsFpsHudToggle') as HTMLInputElement | null;
+    const graphicsClientReductionToggle = document.getElementById('graphicsClientReductionToggle') as HTMLInputElement | null;
 
     fpsLimitSelect?.addEventListener('change', () => {
         const parsed = Number(fpsLimitSelect.value);
@@ -752,6 +819,31 @@ function showStartMenu(): void {
 
         selectedFpsLimit = parsed;
         persistFpsLimitSelection(selectedFpsLimit);
+    });
+
+    graphicsParticlesToggle?.addEventListener('change', () => {
+        graphicsSettings = { ...graphicsSettings, particles: graphicsParticlesToggle.checked };
+        persistGraphicsSettings(graphicsSettings);
+    });
+
+    graphicsTrailsToggle?.addEventListener('change', () => {
+        graphicsSettings = { ...graphicsSettings, trails: graphicsTrailsToggle.checked };
+        persistGraphicsSettings(graphicsSettings);
+    });
+
+    graphicsMapGlowToggle?.addEventListener('change', () => {
+        graphicsSettings = { ...graphicsSettings, mapGlow: graphicsMapGlowToggle.checked };
+        persistGraphicsSettings(graphicsSettings);
+    });
+
+    graphicsFpsHudToggle?.addEventListener('change', () => {
+        graphicsSettings = { ...graphicsSettings, fpsHud: graphicsFpsHudToggle.checked };
+        persistGraphicsSettings(graphicsSettings);
+    });
+
+    graphicsClientReductionToggle?.addEventListener('change', () => {
+        graphicsSettings = { ...graphicsSettings, reduceClientEffects: graphicsClientReductionToggle.checked };
+        persistGraphicsSettings(graphicsSettings);
     });
 
     startGameBtn?.addEventListener('click', () => startGame());
@@ -928,8 +1020,15 @@ function startGame(options?: {
         hat: CubeHatType;
         label: string;
     }>;
+    multiplayerRole?: 'host' | 'client';
 }): void {
     if (game) return;
+
+    const applyClientReduction = options?.multiplayerRole === 'client' && graphicsSettings.reduceClientEffects;
+    const enableParticles = applyClientReduction ? false : graphicsSettings.particles;
+    const enableTrailParticles = applyClientReduction ? false : graphicsSettings.trails;
+    const enableMapGlow = applyClientReduction ? false : graphicsSettings.mapGlow;
+    const showFpsHud = graphicsSettings.fpsHud;
 
     canvas.style.display = 'block';
     menuOverlay.remove();
@@ -939,6 +1038,10 @@ function startGame(options?: {
         canvasHeight: DEFAULT_CANVAS_HEIGHT,
         backgroundColor: DEFAULT_BACKGROUND_COLOR,
         fpsLimit: selectedFpsLimit === 0 ? undefined : selectedFpsLimit,
+        enableParticles,
+        enableTrailParticles,
+        enableMapGlow,
+        showFpsHud,
         player1Color: getSelectedColor('p1').value,
         player2Color: getSelectedColor('p2').value,
         player1Model: selectedModelByPlayer.p1,
