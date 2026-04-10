@@ -25,7 +25,7 @@ import {
     DEFAULT_CANVAS_HEIGHT,
     DEFAULT_CANVAS_WIDTH,
 } from './constants/gameplay';
-import type { InputState } from './systems/InputHandler';
+import { InputHandler, PLAYER_1_KEYS, type InputState } from './systems/InputHandler';
 
 /**
  * Neon Rain - Main Entry Point
@@ -131,6 +131,7 @@ const NEUTRAL_INPUT_STATE: InputState = {
     dash: false,
     deployBomb: false,
 };
+const multiplayerLocalInputHandler = new InputHandler(PLAYER_1_KEYS, 'Net Local');
 const multiplayerRemoteInputByPlayerId = new Map<string, InputState>();
 let multiplayerMatchPlayerOrder: string[] = [];
 let multiplayerLocalPlayerIndex: number | null = null;
@@ -254,14 +255,11 @@ function startMatchTransportLoops(): void {
     }
 
     multiplayerInputSyncIntervalId = window.setInterval(() => {
-        if (!game || multiplayerLocalPlayerIndex === null) {
+        if (multiplayerLocalPlayerIndex === null) {
             return;
         }
 
-        const localInput = game.getPlayerInputState(multiplayerLocalPlayerIndex);
-        if (!localInput) {
-            return;
-        }
+        const localInput = cloneInputState(multiplayerLocalInputHandler.getState());
 
         const sent = networkClient.sendInputFrame(multiplayerInputSequence, localInput);
         if (sent) {
@@ -297,7 +295,7 @@ function startMultiplayerMatchFromRoom(): void {
         return;
     }
 
-    const activePlayers = multiplayerRoom.players.slice(0, 2);
+    const activePlayers = multiplayerRoom.players;
     if (activePlayers.length < 2) {
         multiplayerStatus = 'Need at least 2 players in room to sync match inputs.';
         rerenderMultiplayerIfVisible();
@@ -325,7 +323,14 @@ function startMultiplayerMatchFromRoom(): void {
         returnToMainMenu();
     }
 
-    startGame();
+    startGame({
+        multiplayerSlots: activePlayers.map((player, index) => ({
+            color: player.customization.color,
+            model: player.customization.model,
+            hat: player.customization.hat,
+            label: `P${index + 1}`,
+        })),
+    });
     if (!game) {
         multiplayerStatus = 'Failed to initialize game instance for multiplayer input sync.';
         rerenderMultiplayerIfVisible();
@@ -345,7 +350,7 @@ function startMultiplayerMatchFromRoom(): void {
         }
 
         if (mappedPlayerId === multiplayerSelfPlayerId) {
-            return undefined;
+            return cloneInputState(multiplayerLocalInputHandler.getState());
         }
 
         return multiplayerRemoteInputByPlayerId.get(mappedPlayerId) ?? NEUTRAL_INPUT_STATE;
@@ -669,7 +674,7 @@ function showStartMenu(): void {
     const openMultiplayerBtn = document.getElementById('openMultiplayerBtn');
     const openCustomizeBtn = document.getElementById('openCustomizeBtn');
 
-    startGameBtn?.addEventListener('click', startGame);
+    startGameBtn?.addEventListener('click', () => startGame());
     openMultiplayerBtn?.addEventListener('click', () => {
         connectToMultiplayerAsync()
             .catch(() => {
@@ -836,7 +841,14 @@ function handleMainMenuReturnInput(event: KeyboardEvent): void {
     returnToMainMenu();
 }
 
-function startGame(): void {
+function startGame(options?: {
+    multiplayerSlots?: Array<{
+        color: string;
+        model: CubeModelType;
+        hat: CubeHatType;
+        label: string;
+    }>;
+}): void {
     if (game) return;
 
     canvas.style.display = 'block';
@@ -852,6 +864,7 @@ function startGame(): void {
         player2Model: selectedModelByPlayer.p2,
         player1Hat: selectedHatByPlayer.p1,
         player2Hat: selectedHatByPlayer.p2,
+        playerSlots: options?.multiplayerSlots,
     });
 
     game.start();

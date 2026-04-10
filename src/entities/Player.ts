@@ -11,11 +11,13 @@ export interface PlayerConfig {
     size: number;
     color: string;
     glowColor: string;
-    playerNumber: 1 | 2;
+    playerNumber: number;
     label: string;
     maxHealth: number;
     model: CubeModelType;
     hat: CubeHatType;
+    spawnSlotIndex?: number;
+    spawnSlots?: number;
 }
 
 export const PLAYER_1_CONFIG: Partial<PlayerConfig> = {
@@ -90,13 +92,21 @@ export class Player extends Entity {
         config?: Partial<PlayerConfig>
     ) {
         const finalConfig = { ...DEFAULT_PLAYER_CONFIG, ...config };
+        const spawnSlots = Math.max(2, Math.floor(finalConfig.spawnSlots ?? 2));
+        const defaultSlotIndex = Math.max(0, Math.floor(finalConfig.playerNumber) - 1);
+        const spawnSlotIndex = Math.max(0, Math.min(spawnSlots - 1, Math.floor(finalConfig.spawnSlotIndex ?? defaultSlotIndex)));
         let startX: number;
         const startY = canvasHeight - finalConfig.size - 50;
 
-        if (finalConfig.playerNumber === 1) {
-            startX = canvasWidth / 4 - finalConfig.size / 2;
+        // Preserve legacy two-player spawn lanes for local PvP.
+        if (spawnSlots <= 2) {
+            if (spawnSlotIndex === 0) {
+                startX = canvasWidth / 4 - finalConfig.size / 2;
+            } else {
+                startX = (canvasWidth * 3) / 4 - finalConfig.size / 2;
+            }
         } else {
-            startX = (canvasWidth * 3) / 4 - finalConfig.size / 2;
+            startX = ((spawnSlotIndex + 1) / (spawnSlots + 1)) * canvasWidth - finalConfig.size / 2;
         }
 
         super(startX, startY, finalConfig.size, finalConfig.size, finalConfig.color);

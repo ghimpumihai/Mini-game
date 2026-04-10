@@ -21,6 +21,13 @@ export interface GameObject {
 export type CubeModelType = 'core' | 'cross' | 'stripes' | 'target';
 export type CubeHatType = 'none' | 'cap' | 'crown' | 'beanie';
 
+export interface PlayerSlotConfig {
+    color?: string;
+    model?: CubeModelType;
+    hat?: CubeHatType;
+    label?: string;
+}
+
 /**
  * Configuration options for the game
  */
@@ -34,4 +41,5 @@ export interface GameConfig {
     player2Model?: CubeModelType;
     player1Hat?: CubeHatType;
     player2Hat?: CubeHatType;
+    playerSlots?: PlayerSlotConfig[];
 }

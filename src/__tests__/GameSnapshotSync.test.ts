@@ -61,4 +61,24 @@ describe('Game multiplayer snapshot sync', () => {
         expect(game.getGameState()).toBe(GameState.GAME_OVER);
         expect(game.getGameTime()).toBe(33);
     });
+
+    it('supports four active multiplayer slots in snapshot serialization', () => {
+        const game = new Game('gameCanvas', {
+            playerSlots: [
+                { color: '#00ffff', model: 'core', hat: 'none', label: 'P1' },
+                { color: '#ff00ff', model: 'core', hat: 'none', label: 'P2' },
+                { color: '#39ff14', model: 'core', hat: 'none', label: 'P3' },
+                { color: '#ff9100', model: 'core', hat: 'none', label: 'P4' },
+            ],
+        });
+
+        const playerOrder = ['slot-1', 'slot-2', 'slot-3', 'slot-4'];
+        const snapshot = game.serializeSnapshot(playerOrder);
+
+        expect(snapshot.players).toHaveLength(4);
+        expect(snapshot.players.map(player => player.playerId)).toEqual(playerOrder);
+
+        const uniqueXPositions = new Set(snapshot.players.map(player => player.position.x));
+        expect(uniqueXPositions.size).toBe(4);
+    });
 });

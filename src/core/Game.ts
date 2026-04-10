@@ -1,4 +1,4 @@
-import { GameConfig } from './interfaces';
+import { GameConfig, type CubeHatType, type CubeModelType, type PlayerSlotConfig } from './interfaces';
 import { GameState, GameOverScreen } from './GameState';
 import { InputHandler, PLAYER_1_KEYS, PLAYER_2_KEYS, type InputState } from '../systems/InputHandler';
 import { Player, PLAYER_1_CONFIG, PLAYER_2_CONFIG } from '../entities/Player';
@@ -79,6 +79,8 @@ export class Game {
         requestAnimationFrame?: (callback: FrameRequestCallback) => number;
     };
 
+    private static readonly MULTIPLAYER_FALLBACK_COLORS = ['#00ffff', '#ff00ff', '#39ff14', '#ff9100'];
+
     constructor(canvasId: string, config?: Partial<GameConfig>) {
         // Get the canvas element
         const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -111,10 +113,6 @@ export class Game {
         this.canvas.width = this.config.canvasWidth;
         this.canvas.height = this.config.canvasHeight;
 
-        // Initialize input handlers for both players
-        const input1 = new InputHandler(PLAYER_1_KEYS, 'P1');
-        const input2 = new InputHandler(PLAYER_2_KEYS, 'P2');
-
         const player1Color = this.config.player1Color ?? PLAYER_1_CONFIG.color ?? '#00ffff';
         const player2Color = this.config.player2Color ?? PLAYER_2_CONFIG.color ?? '#ff00ff';
         const player1Model = this.config.player1Model ?? PLAYER_1_CONFIG.model ?? 'core';
@@ -122,32 +120,14 @@ export class Game {
         const player1Hat = this.config.player1Hat ?? PLAYER_1_CONFIG.hat ?? 'none';
         const player2Hat = this.config.player2Hat ?? PLAYER_2_CONFIG.hat ?? 'none';
 
-        // Initialize players
-        const player1 = new Player(
-            this.config.canvasWidth,
-            this.config.canvasHeight,
-            input1,
-            {
-                ...PLAYER_1_CONFIG,
-                color: player1Color,
-                glowColor: player1Color,
-                model: player1Model,
-                hat: player1Hat,
-            }
-        );
-        const player2 = new Player(
-            this.config.canvasWidth,
-            this.config.canvasHeight,
-            input2,
-            {
-                ...PLAYER_2_CONFIG,
-                color: player2Color,
-                glowColor: player2Color,
-                model: player2Model,
-                hat: player2Hat,
-            }
-        );
-        this.players = [player1, player2];
+        this.players = this.createPlayers(config?.playerSlots, {
+            player1Color,
+            player2Color,
+            player1Model,
+            player2Model,
+            player1Hat,
+            player2Hat,
+        });
 
         // Initialize last positions for trail tracking
         this.lastPlayerPositions = this.players.map(p => ({ x: p.position.x, y: p.position.y }));
@@ -173,8 +153,10 @@ export class Game {
         this.particles = new ParticleSystem(800);
 
         // Initialize projectile pool
+        const defaultShooter = this.players[0];
+        const defaultTarget = this.players[1] ?? this.players[0];
         this.projectilePool = new ObjectPool<Projectile>(
-            () => new Projectile(0, 0, this.players[0], this.players[1]),
+            () => new Projectile(0, 0, defaultShooter, defaultTarget),
             20, // Pre-allocate 20 projectiles
             (proj) => proj.reset()
         );
@@ -184,6 +166,83 @@ export class Game {
 
         console.log('🎮 Neon Rain - Competitive PvP Mode initialized!');
         console.log('⚔️  Objective: Defeat the other player!');
+    }
+
+    private createPlayers(
+        playerSlots: PlayerSlotConfig[] | undefined,
+        defaults: {
+            player1Color: string;
+            player2Color: string;
+            player1Model: CubeModelType;
+            player2Model: CubeModelType;
+            player1Hat: CubeHatType;
+            player2Hat: CubeHatType;
+        }
+    ): Player[] {
+        const sanitizedSlots = playerSlots?.filter(Boolean) ?? [];
+
+        if (sanitizedSlots.length >= 2) {
+            const totalSlots = sanitizedSlots.length;
+
+            return sanitizedSlots.map((slot, index) => {
+                const fallbackColor = Game.MULTIPLAYER_FALLBACK_COLORS[index % Game.MULTIPLAYER_FALLBACK_COLORS.length];
+                const fallbackModel = index === 0 ? defaults.player1Model : index === 1 ? defaults.player2Model : 'core';
+                const fallbackHat = index === 0 ? defaults.player1Hat : index === 1 ? defaults.player2Hat : 'none';
+                const resolvedColor = slot.color ?? fallbackColor;
+
+                return new Player(
+                    this.config.canvasWidth,
+                    this.config.canvasHeight,
+                    null,
+                    {
+                        ...PLAYER_1_CONFIG,
+                        color: resolvedColor,
+                        glowColor: resolvedColor,
+                        model: slot.model ?? fallbackModel,
+                        hat: slot.hat ?? fallbackHat,
+                        playerNumber: index + 1,
+                        label: slot.label ?? `P${index + 1}`,
+                        spawnSlotIndex: index,
+                        spawnSlots: totalSlots,
+                    }
+                );
+            });
+        }
+
+        // Local/offline mode keeps two keyboard-controlled players.
+        const input1 = new InputHandler(PLAYER_1_KEYS, 'P1');
+        const input2 = new InputHandler(PLAYER_2_KEYS, 'P2');
+
+        const player1 = new Player(
+            this.config.canvasWidth,
+            this.config.canvasHeight,
+            input1,
+            {
+                ...PLAYER_1_CONFIG,
+                color: defaults.player1Color,
+                glowColor: defaults.player1Color,
+                model: defaults.player1Model,
+                hat: defaults.player1Hat,
+                spawnSlotIndex: 0,
+                spawnSlots: 2,
+            }
+        );
+        const player2 = new Player(
+            this.config.canvasWidth,
+            this.config.canvasHeight,
+            input2,
+            {
+                ...PLAYER_2_CONFIG,
+                color: defaults.player2Color,
+                glowColor: defaults.player2Color,
+                model: defaults.player2Model,
+                hat: defaults.player2Hat,
+                spawnSlotIndex: 1,
+                spawnSlots: 2,
+            }
+        );
+
+        return [player1, player2];
     }
 
     /**
@@ -380,37 +439,44 @@ export class Game {
      * Handle physical collision between players (knockback)
      */
     private handlePlayercollisions(): void {
-        const p1 = this.players[0];
-        const p2 = this.players[1];
+        for (let firstIndex = 0; firstIndex < this.players.length; firstIndex++) {
+            const firstPlayer = this.players[firstIndex];
+            if (!firstPlayer.getIsAlive()) {
+                continue;
+            }
 
-        if (!p1.getIsAlive() || !p2.getIsAlive()) return;
+            for (let secondIndex = firstIndex + 1; secondIndex < this.players.length; secondIndex++) {
+                const secondPlayer = this.players[secondIndex];
+                if (!secondPlayer.getIsAlive()) {
+                    continue;
+                }
 
-        const overlap = getCollisionOverlap(p1.getBounds(), p2.getBounds());
+                const overlap = getCollisionOverlap(firstPlayer.getBounds(), secondPlayer.getBounds());
+                if (!overlap) {
+                    continue;
+                }
 
-        if (overlap) {
-            console.log('🔥 Player collision detected!');
-            // Determine direction of push
-            const center1 = p1.getCenter();
-            const center2 = p2.getCenter();
-            const dx = center1.x - center2.x;
-            const dy = center1.y - center2.y;
+                console.log('🔥 Player collision detected!');
 
-            // Normalize
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const nx = dx / dist;
-            const ny = dy / dist;
+                const center1 = firstPlayer.getCenter();
+                const center2 = secondPlayer.getCenter();
+                const dx = center1.x - center2.x;
+                const dy = center1.y - center2.y;
 
-            // Push players apart (force of 300)
-            p1.applyKnockback(nx, ny, 300);
-            p2.applyKnockback(-nx, -ny, 300);
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const nx = dx / dist;
+                const ny = dy / dist;
 
-            // Add simple particle pop at collision point
-            this.particles.spawnSparkles(
-                p1.position.x + p1.width / 2 - (dx / 2),
-                p1.position.y + p1.height / 2 - (dy / 2),
-                '#ffffff',
-                2
-            );
+                firstPlayer.applyKnockback(nx, ny, 300);
+                secondPlayer.applyKnockback(-nx, -ny, 300);
+
+                this.particles.spawnSparkles(
+                    firstPlayer.position.x + firstPlayer.width / 2 - (dx / 2),
+                    firstPlayer.position.y + firstPlayer.height / 2 - (dy / 2),
+                    '#ffffff',
+                    2
+                );
+            }
         }
     }
 
@@ -504,8 +570,24 @@ export class Game {
             }
 
             case PowerupType.GUN:
-                // Find opponent
-                const opponent = this.players.find(p => p !== player);
+                // Find the nearest alive opponent.
+                const opponents = this.players.filter(p => p !== player && p.getIsAlive());
+                const opponent = opponents.length > 0
+                    ? opponents.reduce((closest, current) => {
+                        const shooterCenter = player.getCenter();
+                        const closestCenter = closest.getCenter();
+                        const currentCenter = current.getCenter();
+
+                        const closestDistanceSquared =
+                            (closestCenter.x - shooterCenter.x) * (closestCenter.x - shooterCenter.x)
+                            + (closestCenter.y - shooterCenter.y) * (closestCenter.y - shooterCenter.y);
+                        const currentDistanceSquared =
+                            (currentCenter.x - shooterCenter.x) * (currentCenter.x - shooterCenter.x)
+                            + (currentCenter.y - shooterCenter.y) * (currentCenter.y - shooterCenter.y);
+
+                        return currentDistanceSquared < closestDistanceSquared ? current : closest;
+                    })
+                    : null;
                 if (opponent) {
                     // Fire 3 projectiles with delay
                     for (let i = 0; i < 3; i++) {
