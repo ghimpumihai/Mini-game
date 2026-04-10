@@ -49,6 +49,10 @@ export class Game {
     private fps: number = 0;
     private fpsUpdateTime: number = 0;
 
+    // Arena visuals
+    private readonly mapBorderThickness: number = 4;
+    private readonly mapBorderColor: string = '#00ffaa';
+
     constructor(canvasId: string, config?: Partial<GameConfig>) {
         // Get the canvas element
         const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -403,6 +407,19 @@ export class Game {
                 player.activateShield(5); // 5 seconds shield
                 break;
 
+            case PowerupType.HEAL: {
+                const healedAmount = player.heal(30);
+                if (healedAmount > 0) {
+                    this.particles.spawnSparkles(
+                        player.position.x + player.width / 2,
+                        player.position.y + player.height / 2,
+                        '#33ff99',
+                        8
+                    );
+                }
+                break;
+            }
+
             case PowerupType.GUN:
                 // Find opponent
                 const opponent = this.players.find(p => p !== player);
@@ -581,6 +598,7 @@ export class Game {
         this.enemyManager.draw(this.ctx); // Rain is foreground-ish
         this.players.forEach(p => p.draw(this.ctx));
         this.projectilePool.getActiveObjects().forEach(p => p.draw(this.ctx));
+        this.drawMapBorder();
 
         this.drawHUD();
 
@@ -624,6 +642,26 @@ export class Game {
         this.ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
         this.ctx.font = '16px monospace';
         this.ctx.fillText("Press M for Main Menu", cx, cy + 80);
+
+        this.ctx.restore();
+    }
+
+    /**
+     * Draw a visible border around the playable map area.
+     */
+    private drawMapBorder(): void {
+        this.ctx.save();
+
+        const lineWidth = this.mapBorderThickness;
+        const inset = lineWidth / 2 + 1;
+        const width = this.config.canvasWidth - inset * 2;
+        const height = this.config.canvasHeight - inset * 2;
+
+        this.ctx.strokeStyle = this.mapBorderColor;
+        this.ctx.lineWidth = lineWidth;
+        this.ctx.shadowBlur = 10;
+        this.ctx.shadowColor = this.mapBorderColor;
+        this.ctx.strokeRect(inset, inset, width, height);
 
         this.ctx.restore();
     }

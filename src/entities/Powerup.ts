@@ -8,6 +8,7 @@ export enum PowerupType {
     BOMB = 'bomb',
     SHIELD = 'shield',
     GUN = 'gun',
+    HEAL = 'heal',
 }
 
 /**
@@ -37,6 +38,12 @@ const POWERUP_CONFIGS: Record<PowerupType, PowerupConfig> = {
         type: PowerupType.GUN,
         color: '#ff0066',
         glowColor: '#ff0066',
+        size: 25,
+    },
+    [PowerupType.HEAL]: {
+        type: PowerupType.HEAL,
+        color: '#33cc66',
+        glowColor: '#33ff99',
         size: 25,
     },
 };
@@ -156,6 +163,22 @@ export class Powerup extends Entity {
             ctx.font = 'bold 14px monospace';
             ctx.textAlign = 'center';
             ctx.fillText('🔫', centerX, centerY + 5);
+        } else if (this.type === PowerupType.HEAL) {
+            // Heal: Orb with a medical cross
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            const crossSize = radius * 0.9;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(centerX - crossSize / 2, centerY);
+            ctx.lineTo(centerX + crossSize / 2, centerY);
+            ctx.moveTo(centerX, centerY - crossSize / 2);
+            ctx.lineTo(centerX, centerY + crossSize / 2);
+            ctx.stroke();
         }
 
         ctx.restore();

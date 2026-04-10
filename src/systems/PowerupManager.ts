@@ -39,7 +39,7 @@ export class PowerupManager {
      * Get random powerup type
      */
     private getRandomPowerupType(): PowerupType {
-        const types = [PowerupType.BOMB, PowerupType.SHIELD, PowerupType.GUN];
+        const types = [PowerupType.BOMB, PowerupType.SHIELD, PowerupType.GUN, PowerupType.HEAL];
         return types[Math.floor(Math.random() * types.length)];
     }
 

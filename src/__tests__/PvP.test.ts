@@ -87,5 +87,18 @@ describe('PvP Phase: Powerups & Combat', () => {
             expect(player.getHealth()).toBe(0);
             expect(player.getIsAlive()).toBe(false);
         });
+
+        it('should heal and not exceed max health', () => {
+            const max = player.getMaxHealth();
+
+            player.takeDamage(40);
+            const healed = player.heal(25);
+            expect(healed).toBe(25);
+            expect(player.getHealth()).toBe(max - 15);
+
+            const cappedHeal = player.heal(100);
+            expect(cappedHeal).toBe(15);
+            expect(player.getHealth()).toBe(max);
+        });
     });
 });

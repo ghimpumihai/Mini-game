@@ -160,6 +160,16 @@ export class Player extends Entity {
         return false;
     }
 
+    public heal(amount: number): number {
+        if (!this.isAlive) return 0;
+
+        const clampedAmount = Math.max(0, amount);
+        const healthBefore = this.health;
+        this.health = Math.min(this.maxHealth, this.health + clampedAmount);
+
+        return this.health - healthBefore;
+    }
+
     public activateShield(duration: number): void {
         this.isShielded = true;
         this.shieldTimer = 0;
