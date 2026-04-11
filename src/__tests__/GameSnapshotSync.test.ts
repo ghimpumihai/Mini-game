@@ -53,7 +53,7 @@ describe('Game multiplayer snapshot sync', () => {
         snapshot.worldWidth = 640;
         snapshot.worldHeight = 480;
         snapshot.players[0].position.x += 40;
-        snapshot.players[0].position.y += 25;
+        snapshot.players[0].position.y = 440;
         snapshot.players[0].health = 55;
 
         game.applySnapshot(snapshot, ['p-host', 'p-peer'], null);

@@ -411,8 +411,8 @@ html, body {
   position: absolute;
   left: max(14px, env(safe-area-inset-left));
   bottom: max(18px, env(safe-area-inset-bottom));
-  width: 138px;
-  height: 138px;
+  width: 112px;
+  height: 112px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.18), rgba(10, 12, 18, 0.82));
@@ -425,10 +425,10 @@ html, body {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 58px;
-  height: 58px;
-  margin-left: -29px;
-  margin-top: -29px;
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  margin-top: -24px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.5);
   background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.85), rgba(80, 96, 132, 0.9));
@@ -439,8 +439,8 @@ html, body {
   position: absolute;
   right: max(14px, env(safe-area-inset-right));
   bottom: max(24px, env(safe-area-inset-bottom));
-  width: 108px;
-  height: 108px;
+  width: 88px;
+  height: 88px;
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 50%;
   background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.9), rgba(20, 24, 30, 0.9));

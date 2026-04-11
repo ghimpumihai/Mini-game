@@ -551,21 +551,47 @@ export class Player extends Entity {
             isShielded: boolean;
             storedBombs: number;
         },
-        options?: { interpolatePosition?: boolean; smoothingAlpha?: number }
+        options?: {
+            interpolatePosition?: boolean;
+            smoothingAlpha?: number;
+            snapDistanceThreshold?: number;
+            jitterDeadZone?: number;
+            preserveVelocity?: boolean;
+        }
     ): void {
         const shouldInterpolate = options?.interpolatePosition ?? false;
         const alpha = Math.max(0, Math.min(1, options?.smoothingAlpha ?? 0.35));
+        const snapDistanceThreshold = Math.max(0, options?.snapDistanceThreshold ?? Number.POSITIVE_INFINITY);
+        const jitterDeadZone = Math.max(0, options?.jitterDeadZone ?? 0);
+        const preserveVelocity = options?.preserveVelocity ?? false;
 
         if (shouldInterpolate) {
-            this.position.x += (snapshot.position.x - this.position.x) * alpha;
-            this.position.y += (snapshot.position.y - this.position.y) * alpha;
+            const deltaX = snapshot.position.x - this.position.x;
+            const deltaY = snapshot.position.y - this.position.y;
+            const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+            const jitterDeadZoneSquared = jitterDeadZone * jitterDeadZone;
+            const snapDistanceThresholdSquared = snapDistanceThreshold * snapDistanceThreshold;
+
+            if (distanceSquared <= jitterDeadZoneSquared) {
+                // Ignore tiny drift to avoid visible micro-jitter.
+            } else if (distanceSquared > snapDistanceThresholdSquared) {
+                this.position.x = snapshot.position.x;
+                this.position.y = snapshot.position.y;
+            } else {
+                this.position.x += deltaX * alpha;
+                this.position.y += deltaY * alpha;
+            }
         } else {
             this.position.x = snapshot.position.x;
             this.position.y = snapshot.position.y;
         }
 
-        this.velocity.x = snapshot.velocity.x;
-        this.velocity.y = snapshot.velocity.y;
+        if (!preserveVelocity) {
+            this.velocity.x = snapshot.velocity.x;
+            this.velocity.y = snapshot.velocity.y;
+        }
+
+        this.clampToBounds();
         this.health = Math.max(0, Math.min(this.maxHealth, snapshot.health));
         this.isAlive = snapshot.isAlive;
         this.isShielded = snapshot.isShielded;

@@ -267,7 +267,9 @@ const app = appElement;
 const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
-let mobileGameOverUiFrameId: number | null = null;
+let mobileGameOverUiIntervalId: number | null = null;
+let mobileGameplayControlsVisible = false;
+let mobileGameOverActionsVisible = false;
 
 canvas.style.display = 'none';
 
@@ -287,44 +289,59 @@ const mobileRestartBtn = mobileGameOverActions.querySelector('#mobileRestartBtn'
 const mobileMenuBtn = mobileGameOverActions.querySelector('#mobileMenuBtn') as HTMLButtonElement | null;
 
 function setMobileGameOverActionsVisible(visible: boolean): void {
+    if (mobileGameOverActionsVisible === visible) {
+        return;
+    }
+
+    mobileGameOverActionsVisible = visible;
     mobileGameOverActions.style.display = visible ? 'flex' : 'none';
+}
+
+function setMobileGameplayControlsVisible(visible: boolean): void {
+    if (!mobileControls || mobileGameplayControlsVisible === visible) {
+        return;
+    }
+
+    mobileGameplayControlsVisible = visible;
+    mobileControls.setVisible(visible);
 }
 
 function updateMobileUiForGameState(): void {
     if (!mobileControls) {
         setMobileGameOverActionsVisible(false);
-        mobileGameOverUiFrameId = null;
+        setMobileGameplayControlsVisible(false);
+        mobileGameOverUiIntervalId = null;
         return;
     }
 
     if (!game) {
-        mobileControls.setVisible(false);
+        setMobileGameplayControlsVisible(false);
         setMobileGameOverActionsVisible(false);
-        mobileGameOverUiFrameId = null;
+        mobileGameOverUiIntervalId = null;
         return;
     }
 
     const isGameOver = game.getGameState() === GameState.GAME_OVER;
-    mobileControls.setVisible(!isGameOver);
+    setMobileGameplayControlsVisible(!isGameOver);
     setMobileGameOverActionsVisible(isGameOver);
-
-    mobileGameOverUiFrameId = window.requestAnimationFrame(updateMobileUiForGameState);
 }
 
 function startMobileUiWatcher(): void {
-    if (!mobileControls || mobileGameOverUiFrameId !== null) {
+    if (!mobileControls || mobileGameOverUiIntervalId !== null) {
         return;
     }
 
-    mobileGameOverUiFrameId = window.requestAnimationFrame(updateMobileUiForGameState);
+    updateMobileUiForGameState();
+    mobileGameOverUiIntervalId = window.setInterval(updateMobileUiForGameState, 120);
 }
 
 function stopMobileUiWatcher(): void {
-    if (mobileGameOverUiFrameId !== null) {
-        window.cancelAnimationFrame(mobileGameOverUiFrameId);
-        mobileGameOverUiFrameId = null;
+    if (mobileGameOverUiIntervalId !== null) {
+        window.clearInterval(mobileGameOverUiIntervalId);
+        mobileGameOverUiIntervalId = null;
     }
 
+    setMobileGameplayControlsVisible(false);
     setMobileGameOverActionsVisible(false);
 }
 
@@ -374,7 +391,8 @@ function getViewportFittedWorldDimensions(sourceWidth: number, sourceHeight: num
 }
 
 function syncSimulationWorldToViewport(): void {
-    if (!game || activeRuntimeRole === 'client') {
+    // Keep multiplayer world size deterministic across clients; only local mode resizes simulation world.
+    if (!game || activeRuntimeRole !== 'local') {
         return;
     }
 
@@ -891,7 +909,7 @@ function showMultiplayerMenu(): void {
 }
 
 function showStartMenu(): void {
-    mobileControls?.setVisible(false);
+    setMobileGameplayControlsVisible(false);
     setMobileGameOverActionsVisible(false);
 
     if (!menuOverlay.isConnected) {
@@ -1137,7 +1155,7 @@ function showCustomizeMenu(): void {
 function returnToMainMenu(): void {
     stopMultiplayerInputSync();
     stopMobileUiWatcher();
-    mobileControls?.setVisible(false);
+    setMobileGameplayControlsVisible(false);
     activeRuntimeRole = 'local';
 
     if (!game) {
@@ -1185,7 +1203,7 @@ function startGame(options?: {
 
     if (mobileControls) {
         mobileControls.attach(app);
-        mobileControls.setVisible(true);
+        setMobileGameplayControlsVisible(true);
     }
 
     setMobileGameOverActionsVisible(false);
