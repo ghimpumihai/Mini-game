@@ -267,6 +267,9 @@ const app = appElement;
 const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
 const CANVAS_VIEWPORT_PADDING_PX = 12;
+const MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX = 130;
+const MULTIPLAYER_INPUT_SEND_INTERVAL_MS = 33;
+const MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS = 50;
 let mobileGameOverUiIntervalId: number | null = null;
 let mobileGameplayControlsVisible = false;
 let mobileGameOverActionsVisible = false;
@@ -304,6 +307,16 @@ function setMobileGameplayControlsVisible(visible: boolean): void {
 
     mobileGameplayControlsVisible = visible;
     mobileControls.setVisible(visible);
+}
+
+function getViewportLayoutBounds(): { maxWidth: number; maxHeight: number } {
+    const maxWidth = Math.max(200, window.innerWidth - CANVAS_VIEWPORT_PADDING_PX * 2);
+    const reservedHeight = mobileControls && mobileGameplayControlsVisible
+        ? MOBILE_GAMEPLAY_CONTROLS_RESERVE_HEIGHT_PX
+        : 0;
+    const maxHeight = Math.max(200, window.innerHeight - CANVAS_VIEWPORT_PADDING_PX * 2 - reservedHeight);
+
+    return { maxWidth, maxHeight };
 }
 
 function updateMobileUiForGameState(): void {
@@ -367,8 +380,7 @@ function applyResponsiveCanvasLayout(): void {
     const sourceHeight = game?.getConfig().canvasHeight
         ?? (canvas.height > 0 ? canvas.height : DEFAULT_CANVAS_HEIGHT);
 
-    const maxWidth = Math.max(200, window.innerWidth - CANVAS_VIEWPORT_PADDING_PX * 2);
-    const maxHeight = Math.max(200, window.innerHeight - CANVAS_VIEWPORT_PADDING_PX * 2);
+    const { maxWidth, maxHeight } = getViewportLayoutBounds();
 
     const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
     const safeScale = Number.isFinite(scale) ? Math.max(0.2, scale) : 1;
@@ -378,8 +390,7 @@ function applyResponsiveCanvasLayout(): void {
 }
 
 function getViewportFittedWorldDimensions(sourceWidth: number, sourceHeight: number): { width: number; height: number } {
-    const maxWidth = Math.max(200, window.innerWidth - CANVAS_VIEWPORT_PADDING_PX * 2);
-    const maxHeight = Math.max(200, window.innerHeight - CANVAS_VIEWPORT_PADDING_PX * 2);
+    const { maxWidth, maxHeight } = getViewportLayoutBounds();
 
     const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
     const safeScale = Number.isFinite(scale) ? Math.max(0.2, scale) : 1;
@@ -507,7 +518,7 @@ function startMatchTransportLoops(): void {
             if (sent) {
                 multiplayerSnapshotTick++;
             }
-        }, 66);
+        }, MULTIPLAYER_SNAPSHOT_SEND_INTERVAL_MS);
 
         return;
     }
@@ -523,7 +534,7 @@ function startMatchTransportLoops(): void {
         if (sent) {
             multiplayerInputSequence++;
         }
-    }, 50);
+    }, MULTIPLAYER_INPUT_SEND_INTERVAL_MS);
 }
 
 function refreshHostRoleForActiveMatch(): void {

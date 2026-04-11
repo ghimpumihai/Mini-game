@@ -1081,6 +1081,12 @@ export class Game {
         this.networkPlayerOrder = [...(options?.playerOrder ?? [])];
         this.networkLocalPlayerId = options?.localPlayerId ?? null;
 
+        if (this.networkRole !== 'local') {
+            this.resizeWorld(DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT, {
+                preserveEntityPositions: false,
+            });
+        }
+
         const shouldRunSimulation = this.networkRole !== 'client';
         this.enemyManager.setSimulationEnabled(shouldRunSimulation);
         this.powerupManager.setSimulationEnabled(shouldRunSimulation);
@@ -1164,7 +1170,11 @@ export class Game {
         playerOrder?: string[],
         localPlayerId?: string | null
     ): void {
-        if (typeof snapshot.worldWidth === 'number' && typeof snapshot.worldHeight === 'number') {
+        if (
+            this.networkRole === 'local'
+            && typeof snapshot.worldWidth === 'number'
+            && typeof snapshot.worldHeight === 'number'
+        ) {
             this.resizeWorld(snapshot.worldWidth, snapshot.worldHeight, { preserveEntityPositions: false });
         }
 
@@ -1187,9 +1197,9 @@ export class Game {
             const isLocalPlayer = mappedPlayerId === resolvedLocalPlayerId;
             player.applyNetworkSnapshot(playerSnapshot, {
                 interpolatePosition: this.networkRole === 'client',
-                smoothingAlpha: isLocalPlayer ? 0.2 : 0.45,
-                jitterDeadZone: isLocalPlayer ? 1.6 : 0.4,
-                snapDistanceThreshold: isLocalPlayer ? 95 : 160,
+                smoothingAlpha: isLocalPlayer ? 0.12 : 0.5,
+                jitterDeadZone: isLocalPlayer ? 2.2 : 0.4,
+                snapDistanceThreshold: isLocalPlayer ? 110 : 160,
                 preserveVelocity: this.networkRole === 'client' && isLocalPlayer,
             });
         });

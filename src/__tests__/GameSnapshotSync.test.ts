@@ -87,4 +87,18 @@ describe('Game multiplayer snapshot sync', () => {
         const uniqueXPositions = new Set(snapshot.players.map(player => player.position.x));
         expect(uniqueXPositions.size).toBe(4);
     });
+
+    it('keeps canonical world size in client role even when snapshot carries different dimensions', () => {
+        const game = new Game('gameCanvas');
+        game.setNetworkSyncContext({ role: 'client', playerOrder: ['p-host', 'p-peer'], localPlayerId: 'p-peer' });
+
+        const snapshot = game.serializeSnapshot(['p-host', 'p-peer']);
+        snapshot.worldWidth = 320;
+        snapshot.worldHeight = 240;
+
+        game.applySnapshot(snapshot, ['p-host', 'p-peer'], 'p-peer');
+
+        expect(game.getConfig().canvasWidth).toBe(800);
+        expect(game.getConfig().canvasHeight).toBe(600);
+    });
 });
