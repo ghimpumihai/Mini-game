@@ -265,12 +265,37 @@ if (!(appElement instanceof HTMLElement) || !(canvasElement instanceof HTMLCanva
 const app = appElement;
 const canvas = canvasElement;
 const mobileControls = isMobileDevice() ? new MobileControls() : null;
+const CANVAS_VIEWPORT_PADDING_PX = 12;
 
 canvas.style.display = 'none';
 
 const menuOverlay = document.createElement('div');
 menuOverlay.className = 'menu-overlay';
 app.appendChild(menuOverlay);
+
+function applyResponsiveCanvasLayout(): void {
+    const sourceWidth = game?.getConfig().canvasWidth
+        ?? (canvas.width > 0 ? canvas.width : DEFAULT_CANVAS_WIDTH);
+    const sourceHeight = game?.getConfig().canvasHeight
+        ?? (canvas.height > 0 ? canvas.height : DEFAULT_CANVAS_HEIGHT);
+
+    const maxWidth = Math.max(200, window.innerWidth - CANVAS_VIEWPORT_PADDING_PX * 2);
+    const maxHeight = Math.max(200, window.innerHeight - CANVAS_VIEWPORT_PADDING_PX * 2);
+
+    const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+    const safeScale = Number.isFinite(scale) ? Math.max(0.2, scale) : 1;
+
+    canvas.style.width = `${Math.floor(sourceWidth * safeScale)}px`;
+    canvas.style.height = `${Math.floor(sourceHeight * safeScale)}px`;
+}
+
+function handleViewportResize(): void {
+    if (canvas.style.display === 'none') {
+        return;
+    }
+
+    applyResponsiveCanvasLayout();
+}
 
 function getSelectedColor(player: PlayerSlot): NeonColorOption {
     const selected = NEON_COLORS.find(c => c.name === selectedColorByPlayer[player]);
@@ -1079,6 +1104,7 @@ function startGame(options?: {
     });
 
     game.start();
+    applyResponsiveCanvasLayout();
 
     if (mobileControls && !options?.multiplayerSlots) {
         // On mobile local mode, drive player one from joystick + boost overlay.
@@ -1098,6 +1124,8 @@ function startGame(options?: {
 }
 
 window.addEventListener('keydown', handleMainMenuReturnInput);
+window.addEventListener('resize', handleViewportResize);
+window.addEventListener('orientationchange', handleViewportResize);
 
 showStartMenu();
 
